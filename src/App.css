@@ -1,0 +1,6 @@
+@import "tailwindcss";
+
+@theme {
+  --color-peer: #f0006e;
+  --color-peer-dark: #c50059;
+}

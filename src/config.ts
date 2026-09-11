@@ -1,0 +1,8 @@
+// Switch to https://rpc.peercash.xyz once DNS + TLS is live
+export const RPC_URL = "http://167.71.186.249:8545";
+export const CHAIN_ID = 563321;
+export const CHAIN_NAME = "PeerCash Testnet";
+export const CURRENCY_SYMBOL = "PEER";
+
+// Miner local node — queried by MinerTab for sync/hashrate status
+export const MINER_LOCAL_RPC = "http://127.0.0.1:8546";
