@@ -1,11 +1,11 @@
 {
-  "version": "0.1.4",
-  "notes": "Auto-update support, HTTPS RPC endpoint, gas price safety cap, EIP-55 address checksum validation, private key memory zeroing.",
+  "version": "0.1.5",
+  "notes": "Miner sync progress saved across restarts — shows last synced block on relaunch instead of starting from blank.",
   "pub_date": "2026-09-15T00:00:00Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRZHZlVEtoZzA5ZEpOUXMvYTBVSmdVNXFxOWtCTHl4NjUxaDNUV0o3dGdycjRJbHViNk9ZY1ByUU1DV29iVzl4M0lsY0pxaWRBUi80R1cxUVVodHplNmVEQ3Q3L0NkWlFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5NDk3OTkzCWZpbGU6UGVlckNhc2ggV2FsbGV0XzAuMS40X3g2NC1zZXR1cC5leGUKVWNDMi9DUlRDSFpQK0ViOXVmc3VkRklDcFd5WXFkanVoSm5uRVh4ZElvbThDd0ZML1NHS203QnVjamdxWVJhYVRjdVVSLzZFYitYbTNSVm1uRnBoQ0E9PQo=",
-      "url": "https://github.com/PeerCashChain/PeerCash-Wallet/releases/download/v0.1.4/PeerCash-Wallet_0.1.4_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRZHZlVEtoZzA5ZE0yVlptV0ljM2NqV2M4L091ZzJZdXhpNXhCSzZJZk82ZjhieGJOd2Nqd3hNNDNQK0UrMXVsRVptMnhod0dEQzkwalpTeDF3aG5yZitmSTc1SW15ZHdvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5NTEwMjIzCWZpbGU6UGVlckNhc2ggV2FsbGV0XzAuMS41X3g2NC1zZXR1cC5leGUKVTJ3dHBpVVFDSnVBTEN5Z0pEMW9OODBwVzJvTENkb3ZMMlllUWFRMXA2UjFqTXpmcGRrMmthYVlGMUp6Zm1YQnNqMTUwcHM1c3VnSGliT211aEpjRFE9PQo=",
+      "url": "https://github.com/PeerCashChain/PeerCash-Wallet/releases/download/v0.1.5/PeerCash-Wallet_0.1.5_x64-setup.exe"
     }
   }
 }

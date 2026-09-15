@@ -131,6 +131,21 @@ fn record_auth_result(state: &Mutex<FailedAttempts>, succeeded: bool) {
 
 struct MinerProcess(Mutex<Option<Child>>);
 
+// ── Sync cache ────────────────────────────────────────────────────────────────
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SyncCache {
+    current: u64,
+    highest: u64,
+}
+
+fn sync_cache_path(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|d| d.join("miner-node").join("sync_cache.json"))
+}
+
 fn kill_miner_guard(guard: &mut std::sync::MutexGuard<Option<Child>>) {
     if let Some(ref mut child) = **guard {
         child.kill().ok();
@@ -765,6 +780,24 @@ async fn get_miner_pid(miner_state: tauri::State<'_, MinerProcess>) -> Result<Op
     }
 }
 
+#[tauri::command]
+async fn get_sync_cache(app: tauri::AppHandle) -> Result<Option<SyncCache>, String> {
+    let Some(path) = sync_cache_path(&app) else { return Ok(None) };
+    match std::fs::read_to_string(&path) {
+        Ok(s) => serde_json::from_str(&s).map(Some).map_err(|e| e.to_string()),
+        Err(_) => Ok(None),
+    }
+}
+
+#[tauri::command]
+async fn save_sync_cache(app: tauri::AppHandle, current: u64, highest: u64) -> Result<(), String> {
+    let Some(path) = sync_cache_path(&app) else { return Ok(()) };
+    let dir = path.parent().unwrap_or(&path);
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let json = serde_json::to_string(&SyncCache { current, highest }).map_err(|e| e.to_string())?;
+    std::fs::write(&path, json).map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -787,6 +820,8 @@ pub fn run() {
             stop_miner,
             get_miner_pid,
             get_miner_log_tail,
+            get_sync_cache,
+            save_sync_cache,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

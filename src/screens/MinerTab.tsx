@@ -3,6 +3,7 @@ import {
   startMiner,
   stopMiner,
   pollMinerStatus,
+  getSyncCache,
   formatHashrate,
   type MinerStatus,
   type MinerPollResult,
@@ -97,6 +98,7 @@ export default function MinerTab({ address }: Props) {
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [syncRate, setSyncRate] = useState(0); // blocks/sec
+  const [syncCache, setSyncCache] = useState<{ current: number; highest: number } | null>(null);
 
   const runningRef = useRef(running);
   const prevSyncRef = useRef<{ block: number; ts: number } | null>(null);
@@ -130,8 +132,9 @@ export default function MinerTab({ address }: Props) {
     return () => clearInterval(id);
   }, [running, startedAt, poll.status]);
 
-  // On mount: check if the miner is already running (user switched tabs)
+  // On mount: load cached sync progress + check if miner is already running
   useEffect(() => {
+    getSyncCache().then((c) => { if (c) setSyncCache(c); });
     pollMinerStatus(true).then((result) => {
       if (result.status !== "crashed") {
         setRunning(true);
@@ -228,6 +231,16 @@ export default function MinerTab({ address }: Props) {
           </div>
 
           <p className="text-sm text-zinc-500">{statusSubtext(poll, elapsed)}</p>
+
+          {/* Last-known sync progress — shown when stopped and cache exists */}
+          {isStopped && syncCache && syncCache.highest > 0 && (
+            <div className="space-y-1.5">
+              <p className="text-xs text-zinc-600">
+                Last synced: block {syncCache.current.toLocaleString()} of {syncCache.highest.toLocaleString()}
+              </p>
+              <SyncProgress current={syncCache.current} highest={syncCache.highest} rate={0} />
+            </div>
+          )}
 
           {/* Peer count — shown whenever the node is running */}
           {(poll.status === "syncing" || poll.status === "mining") && (

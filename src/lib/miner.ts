@@ -54,6 +54,14 @@ export function formatHashrate(hps: number): string {
   return `${(hps / 1_000_000).toFixed(2)} MH/s`;
 }
 
+export function getSyncCache(): Promise<{ current: number; highest: number } | null> {
+  return invoke<{ current: number; highest: number } | null>("get_sync_cache").catch(() => null);
+}
+
+function saveSyncCache(current: number, highest: number): void {
+  invoke("save_sync_cache", { current, highest }).catch(() => {});
+}
+
 /** Read last 8 KB of the miner's stderr log. */
 async function getMinerLogTail(): Promise<string> {
   return invoke<string>("get_miner_log_tail", { bytes: 8192 }).catch(() => "");
@@ -128,6 +136,8 @@ export async function pollMinerStatus(isRunning: boolean): Promise<MinerPollResu
     const current = parseInt(s.currentBlock, 16);
     const highest = parseInt(s.highestBlock, 16);
     const delta = highest - current;
+
+    if (current > 0 && highest > 0) saveSyncCache(current, highest);
 
     return {
       status: "syncing",
