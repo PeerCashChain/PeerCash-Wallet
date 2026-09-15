@@ -1,5 +1,5 @@
-import { useState, type FormEvent } from "react";
-import { createAccount, importPrivateKey, importKeystore } from "../lib/account";
+import { useState, useEffect, type FormEvent } from "react";
+import { createAccount, getKeystoreJson, importPrivateKey, importKeystore } from "../lib/account";
 
 type Step =
   | "welcome"
@@ -45,6 +45,14 @@ export default function Setup({ onComplete }: Props) {
 
   const [error, setError] = useState("");
 
+  // Fetch keystore JSON from disk when entering the backup step — never transmitted at creation time.
+  useEffect(() => {
+    if (step !== "backup") return;
+    getKeystoreJson()
+      .then(setKeystoreJson)
+      .catch(() => setKeystoreJson("Error reading keystore — check app data directory"));
+  }, [step]);
+
   function goBack() {
     setError("");
     if (step === "create-password") setStep("welcome");
@@ -66,10 +74,9 @@ export default function Setup({ onComplete }: Props) {
     }
     setCreating(true);
     try {
-      const result = await createAccount(password);
-      setCreatedAddress(result.address);
-      setKeystoreJson(result.keystoreJson);
-      setStep("backup");
+      const address = await createAccount(password);
+      setCreatedAddress(address);
+      setStep("backup"); // keystoreJson fetched via useEffect on step change
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to create account");
     } finally {
@@ -91,6 +98,7 @@ export default function Setup({ onComplete }: Props) {
     setImporting(true);
     try {
       const addr = await importPrivateKey(importKey.trim(), importPassword);
+      setImportKey(""); // clear from state immediately after use
       onComplete(addr);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Import failed");

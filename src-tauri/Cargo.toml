@@ -28,6 +28,7 @@ k256 = { version = "0.13", features = ["ecdsa"] }
 sha3 = "0.10"
 rand = "0.8"
 hex = "0.4"
+zeroize = "1"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

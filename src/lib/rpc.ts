@@ -1,18 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
-import { RPC_URL } from "../config";
 
 interface RpcResponse {
   result?: unknown;
   error?: { code: number; message: string };
 }
 
-// Generic JSON-RPC call; returns the .result value (may be string, object, or null).
+// Generic JSON-RPC call to the public testnet RPC. URL is hardcoded in Rust.
 async function callRaw(method: string, params: unknown[] = []): Promise<unknown> {
-  const data = await invoke<RpcResponse>("rpc_call", {
-    url: RPC_URL,
-    method,
-    params,
-  });
+  const data = await invoke<RpcResponse>("rpc_call", { method, params });
   if (data.error) throw new Error(`RPC ${data.error.code}: ${data.error.message}`);
   return data.result ?? null;
 }

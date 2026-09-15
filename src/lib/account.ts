@@ -1,12 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export interface CreateAccountResult {
-  address: string;
-  keystoreJson: string;
+export function createAccount(password: string): Promise<string> {
+  return invoke("create_account", { password });
 }
 
-export function createAccount(password: string): Promise<CreateAccountResult> {
-  return invoke("create_account", { password });
+export function getKeystoreJson(): Promise<string> {
+  return invoke("get_keystore_json");
 }
 
 export function importPrivateKey(
@@ -27,12 +26,14 @@ export function getAccount(): Promise<string | null> {
   return invoke("get_account");
 }
 
-/** Decrypt keystore in Rust, sign a legacy tx, broadcast, return tx hash. */
+export function exportPrivateKey(password: string): Promise<string> {
+  return invoke("export_private_key", { password });
+}
+
 export function sendTransaction(
-  rpcUrl: string,
   to: string,
   amountPeer: string,
   password: string,
 ): Promise<string> {
-  return invoke("send_transaction", { rpcUrl, to, amountPeer, password });
+  return invoke("send_transaction", { to, amountPeer, password });
 }

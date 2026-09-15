@@ -1,5 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import { MINER_LOCAL_RPC } from "../config";
 
 // ── Tauri command wrappers ────────────────────────────────────────────────────
 
@@ -23,12 +22,9 @@ interface RpcResponse {
   error?: { code: number; message: string };
 }
 
+// Calls the local miner node RPC. URL is hardcoded in Rust (127.0.0.1:8546).
 async function callMinerRpc(method: string, params: unknown[] = []): Promise<unknown> {
-  const data = await invoke<RpcResponse>("rpc_call", {
-    url: MINER_LOCAL_RPC,
-    method,
-    params,
-  });
+  const data = await invoke<RpcResponse>("miner_rpc_call", { method, params });
   if (data.error) throw new Error(`RPC ${data.error.code}: ${data.error.message}`);
   return data.result ?? null;
 }
@@ -90,7 +86,6 @@ export function parseHashrateFromLog(log: string): number {
   const avgDiff = entries.reduce((sum, e) => sum + e.difficulty, 0) / entries.length;
 
   if (entries.length === 1) {
-    // Only one sealed block in the window — assume 30s average solve time as rough estimate
     return Math.round(avgDiff / 30);
   }
 
@@ -113,15 +108,12 @@ const RPC_FAIL = Symbol("RPC_FAIL");
 export async function pollMinerStatus(isRunning: boolean): Promise<MinerPollResult> {
   if (!isRunning) return { status: "stopped" };
 
-  // Check process is alive
   const pid = await getMinerPid();
   if (pid === null) return { status: "crashed" };
 
-  // Probe the RPC — if it fails the node hasn't started its HTTP server yet
   const syncResult = await callMinerRpc("eth_syncing", []).catch(() => RPC_FAIL);
   if (syncResult === RPC_FAIL) return { status: "starting" };
 
-  // RPC fields + log tail in parallel (eth_hashrate not available in this fork — use log)
   const [blockNum, peerHex, logTail] = await Promise.all([
     callMinerRpc("eth_blockNumber", []).catch(() => "0x0"),
     callMinerRpc("net_peerCount", []).catch(() => "0x0"),
@@ -129,10 +121,8 @@ export async function pollMinerStatus(isRunning: boolean): Promise<MinerPollResu
   ]);
 
   const hashrate = parseHashrateFromLog(logTail);
-
   const peerCount = parseInt(peerHex as string, 16);
 
-  // Actively syncing
   if (syncResult !== false && syncResult !== null && typeof syncResult === "object") {
     const s = syncResult as { currentBlock: string; highestBlock: string };
     const current = parseInt(s.currentBlock, 16);
@@ -141,9 +131,6 @@ export async function pollMinerStatus(isRunning: boolean): Promise<MinerPollResu
 
     return {
       status: "syncing",
-      // Only attach syncInfo (which triggers the progress bar) when the delta is
-      // large enough to be worth showing. Small deltas = fast checkpoint catchup
-      // after a restart — show as text instead so the bar doesn't flash from 0%.
       syncInfo: delta > 100 ? { current, highest } : undefined,
       catchupBlocks: delta > 0 ? delta : undefined,
       blockNumber: parseInt(blockNum as string, 16),
@@ -151,8 +138,6 @@ export async function pollMinerStatus(isRunning: boolean): Promise<MinerPollResu
     };
   }
 
-  // eth_syncing = false means fully synced. Since we always start with --mine,
-  // synced + running = mining. eth_mining RPC is unreliable across go-ethereum forks.
   return {
     status: "mining",
     hashrate,

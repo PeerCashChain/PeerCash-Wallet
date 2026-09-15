@@ -5,24 +5,27 @@ import {
   type FormEvent,
 } from "react";
 import { getBalance, getBlockNumber, getTransactionReceipt } from "../lib/rpc";
-import { sendTransaction } from "../lib/account";
-import { CHAIN_NAME, CURRENCY_SYMBOL, RPC_URL } from "../config";
+import { sendTransaction, exportPrivateKey } from "../lib/account";
+import { CHAIN_NAME, CHAIN_ID, CURRENCY_SYMBOL } from "../config";
 
 interface Props {
   address: string;
 }
 
 type Status = "connecting" | "connected" | "error";
-type View = "main" | "send" | "tx-status";
+type View = "main" | "send" | "tx-status" | "settings" | "export-warn" | "export-auth" | "export-reveal";
 type TxStatus = "pending" | "confirmed" | "failed";
 
 const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
 const AMOUNT_RE = /^\d+(\.\d{1,18})?$/;
+const EXPORT_COUNTDOWN_SECS = 60;
 
 const INPUT =
   "w-full bg-zinc-900 border border-zinc-700 focus:border-peer rounded-lg px-4 py-2.5 text-sm text-white placeholder-zinc-600 focus:outline-none transition-colors";
 const BTN_PRIMARY =
   "w-full bg-peer hover:bg-peer-dark disabled:bg-zinc-800 disabled:text-zinc-600 text-white text-sm font-medium py-2.5 rounded-lg transition-colors cursor-pointer disabled:cursor-not-allowed";
+const BTN_AMBER =
+  "w-full border border-amber-700/60 hover:border-amber-500 disabled:border-zinc-700 disabled:text-zinc-600 text-amber-400 hover:text-amber-300 disabled:cursor-not-allowed text-sm font-medium py-2.5 rounded-lg transition-colors cursor-pointer";
 const LABEL =
   "block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-1.5";
 
@@ -52,6 +55,16 @@ export default function Wallet({ address }: Props) {
   const [txBlock, setTxBlock] = useState<number | null>(null);
   const [hashCopied, setHashCopied] = useState(false);
 
+  // ── Export key flow ───────────────────────────────────────────────────────
+  const [exportWarnChecked, setExportWarnChecked] = useState(false);
+  const [exportPwd, setExportPwd] = useState("");
+  const [showExportPwd, setShowExportPwd] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
+  const [exportedKey, setExportedKey] = useState("");
+  const [keyCopied, setKeyCopied] = useState(false);
+  const [exportCountdown, setExportCountdown] = useState(EXPORT_COUNTDOWN_SECS);
+
   // ── Background balance + block poller ─────────────────────────────────────
   const fetchData = useCallback(async () => {
     try {
@@ -76,7 +89,7 @@ export default function Wallet({ address }: Props) {
     return () => clearInterval(id);
   }, [fetchData]);
 
-  // ── Receipt poller (while on tx-status and still pending) ─────────────────
+  // ── Receipt poller ────────────────────────────────────────────────────────
   useEffect(() => {
     if (view !== "tx-status" || txStatus !== "pending") return;
     let live = true;
@@ -102,6 +115,25 @@ export default function Wallet({ address }: Props) {
     };
   }, [view, txHash, txStatus, fetchData]);
 
+  // ── Export key countdown ──────────────────────────────────────────────────
+  useEffect(() => {
+    if (view !== "export-reveal") return;
+    setExportCountdown(EXPORT_COUNTDOWN_SECS);
+    const id = setInterval(() => setExportCountdown(c => c - 1), 1000);
+    return () => clearInterval(id);
+  }, [view]);
+
+  useEffect(() => {
+    if (view === "export-reveal" && exportCountdown <= 0) {
+      setExportedKey("");
+      setExportPwd("");
+      setExportError("");
+      setExportWarnChecked(false);
+      setShowExportPwd(false);
+      setView("settings");
+    }
+  }, [exportCountdown, view]);
+
   // ── Handlers ──────────────────────────────────────────────────────────────
   async function copyAddress() {
     await navigator.clipboard.writeText(address);
@@ -113,6 +145,21 @@ export default function Wallet({ address }: Props) {
     await navigator.clipboard.writeText(txHash);
     setHashCopied(true);
     setTimeout(() => setHashCopied(false), 2000);
+  }
+
+  async function copyExportedKey() {
+    await navigator.clipboard.writeText(exportedKey);
+    setKeyCopied(true);
+    setTimeout(() => setKeyCopied(false), 2000);
+  }
+
+  function clearExportFlow() {
+    setExportedKey("");
+    setExportPwd("");
+    setExportError("");
+    setExportWarnChecked(false);
+    setShowExportPwd(false);
+    setView("settings");
   }
 
   async function handleSend(e: FormEvent) {
@@ -136,7 +183,7 @@ export default function Wallet({ address }: Props) {
 
     setSending(true);
     try {
-      const hash = await sendTransaction(RPC_URL, recipient, amt, sendPwd);
+      const hash = await sendTransaction(recipient, amt, sendPwd);
       setTxHash(hash);
       setTxStatus("pending");
       setTxBlock(null);
@@ -151,9 +198,24 @@ export default function Wallet({ address }: Props) {
     }
   }
 
-  function openSend() {
-    setSendError("");
-    setView("send");
+  async function handleExportAuth(e: FormEvent) {
+    e.preventDefault();
+    setExportError("");
+    if (!exportPwd) {
+      setExportError("Password is required");
+      return;
+    }
+    setExporting(true);
+    try {
+      const key = await exportPrivateKey(exportPwd);
+      setExportPwd("");
+      setExportedKey(key);
+      setView("export-reveal");
+    } catch (e) {
+      setExportError(e instanceof Error ? e.message : "Wrong password");
+    } finally {
+      setExporting(false);
+    }
   }
 
   // ── Status dot ────────────────────────────────────────────────────────────
@@ -179,6 +241,7 @@ export default function Wallet({ address }: Props) {
     <div className="min-h-screen bg-zinc-950 text-white flex flex-col select-none">
       {/* ── Header ── */}
       <header className="flex items-center px-6 py-4 border-b border-zinc-800/60">
+        {/* Left */}
         {view === "send" && (
           <button
             onClick={() => setView("main")}
@@ -187,13 +250,41 @@ export default function Wallet({ address }: Props) {
             ← Cancel
           </button>
         )}
-        {view !== "send" && <div className="w-16" />}
+        {view === "settings" && (
+          <button
+            onClick={() => setView("main")}
+            className="text-zinc-400 hover:text-white text-sm transition-colors cursor-pointer w-16"
+          >
+            ← Back
+          </button>
+        )}
+        {view === "export-warn" && (
+          <button
+            onClick={() => { setExportWarnChecked(false); setView("settings"); }}
+            className="text-zinc-400 hover:text-white text-sm transition-colors cursor-pointer w-16"
+          >
+            ← Back
+          </button>
+        )}
+        {view === "export-auth" && (
+          <button
+            onClick={() => { setExportError(""); setExportPwd(""); setView("export-warn"); }}
+            className="text-zinc-400 hover:text-white text-sm transition-colors cursor-pointer w-16"
+          >
+            ← Back
+          </button>
+        )}
+        {(view === "main" || view === "tx-status" || view === "export-reveal") && (
+          <div className="w-16" />
+        )}
 
+        {/* Center */}
         <div className="flex items-center gap-2.5 mx-auto">
           <img src="/logo.jpg" alt="PeerCash" className="w-7 h-7 rounded-full" />
           <span className="font-semibold tracking-tight">PeerCash</span>
         </div>
 
+        {/* Right */}
         <div className="flex items-center gap-2 text-sm w-16 justify-end">
           {view === "main" && (
             <>
@@ -246,7 +337,7 @@ export default function Wallet({ address }: Props) {
 
           {/* Send button */}
           <button
-            onClick={openSend}
+            onClick={() => { setSendError(""); setView("send"); }}
             className="w-full bg-peer hover:bg-peer-dark text-white text-sm font-medium py-3 rounded-xl transition-colors cursor-pointer"
           >
             Send PEER
@@ -272,6 +363,15 @@ export default function Wallet({ address }: Props) {
               Updated {lastUpdated.toLocaleTimeString()} · refreshes every 12s
             </p>
           )}
+
+          <div className="pt-1 text-center">
+            <button
+              onClick={() => setView("settings")}
+              className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors cursor-pointer"
+            >
+              Settings
+            </button>
+          </div>
         </main>
       )}
 
@@ -339,11 +439,7 @@ export default function Wallet({ address }: Props) {
               <p className="text-red-400 text-xs">{sendError}</p>
             )}
 
-            <button
-              type="submit"
-              disabled={sending}
-              className={BTN_PRIMARY}
-            >
+            <button type="submit" disabled={sending} className={BTN_PRIMARY}>
               {sending ? "Signing & Broadcasting…" : `Send ${CURRENCY_SYMBOL}`}
             </button>
           </form>
@@ -355,11 +451,7 @@ export default function Wallet({ address }: Props) {
         <main className="flex-1 px-6 py-8 w-full max-w-md mx-auto space-y-6">
           <div className="text-center space-y-1">
             <div className="text-4xl mb-2">
-              {txStatus === "confirmed"
-                ? "✓"
-                : txStatus === "failed"
-                  ? "✗"
-                  : "⏳"}
+              {txStatus === "confirmed" ? "✓" : txStatus === "failed" ? "✗" : "⏳"}
             </div>
             <h2 className="text-xl font-semibold">
               {txStatus === "confirmed"
@@ -369,9 +461,7 @@ export default function Wallet({ address }: Props) {
                   : "Transaction Sent"}
             </h2>
             {txStatus === "pending" && (
-              <p className="text-zinc-400 text-sm">
-                Waiting for the next block…
-              </p>
+              <p className="text-zinc-400 text-sm">Waiting for the next block…</p>
             )}
             {txStatus === "confirmed" && txBlock !== null && (
               <p className="text-zinc-400 text-sm">
@@ -385,13 +475,10 @@ export default function Wallet({ address }: Props) {
             )}
           </div>
 
-          {/* Hash */}
           <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 space-y-2">
             <p className={LABEL}>Transaction Hash</p>
             <div className="flex items-center gap-3">
-              <span className="font-mono text-sm text-zinc-300 truncate">
-                {shortHash}
-              </span>
+              <span className="font-mono text-sm text-zinc-300 truncate">{shortHash}</span>
               <button
                 onClick={copyTxHash}
                 className="shrink-0 text-xs text-zinc-400 hover:text-white border border-zinc-700 hover:border-zinc-500 px-3 py-1 rounded-md transition-colors cursor-pointer"
@@ -401,7 +488,6 @@ export default function Wallet({ address }: Props) {
             </div>
           </div>
 
-          {/* Status indicator */}
           <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
             <p className={LABEL}>Status</p>
             <div className="flex items-center gap-3">
@@ -414,17 +500,174 @@ export default function Wallet({ address }: Props) {
                       : "bg-yellow-400 animate-pulse"
                 }`}
               />
-              <span className="text-sm text-zinc-300 capitalize">
-                {txStatus === "pending" ? "Pending…" : txStatus.charAt(0).toUpperCase() + txStatus.slice(1)}
+              <span className="text-sm text-zinc-300">
+                {txStatus === "pending"
+                  ? "Pending…"
+                  : txStatus.charAt(0).toUpperCase() + txStatus.slice(1)}
               </span>
             </div>
           </div>
 
-          <button
-            onClick={() => setView("main")}
-            className={BTN_PRIMARY}
-          >
+          <button onClick={() => setView("main")} className={BTN_PRIMARY}>
             Back to Wallet
+          </button>
+        </main>
+      )}
+
+      {/* ── Settings view ── */}
+      {view === "settings" && (
+        <main className="flex-1 px-6 py-8 w-full max-w-md mx-auto space-y-6">
+          <h2 className="text-xl font-semibold">Settings</h2>
+
+          <div className="bg-zinc-900 border border-zinc-800 rounded-xl divide-y divide-zinc-800">
+            <div className="px-5 py-3 flex justify-between items-center">
+              <span className="text-sm text-zinc-400">Network</span>
+              <span className="text-sm text-zinc-200">{CHAIN_NAME}</span>
+            </div>
+            <div className="px-5 py-3 flex justify-between items-center">
+              <span className="text-sm text-zinc-400">Chain ID</span>
+              <span className="text-sm font-mono text-zinc-200">{CHAIN_ID}</span>
+            </div>
+            <div className="px-5 py-3 flex justify-between items-center">
+              <span className="text-sm text-zinc-400">Currency</span>
+              <span className="text-sm text-zinc-200">{CURRENCY_SYMBOL}</span>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-xs font-medium text-zinc-500 uppercase tracking-wider">Advanced</p>
+            <button
+              onClick={() => {
+                setExportWarnChecked(false);
+                setExportError("");
+                setExportPwd("");
+                setView("export-warn");
+              }}
+              className="w-full border border-amber-800/50 hover:border-amber-600/70 text-amber-500 hover:text-amber-400 text-sm font-medium py-2.5 rounded-lg transition-colors cursor-pointer text-left px-4"
+            >
+              Export Private Key
+            </button>
+          </div>
+        </main>
+      )}
+
+      {/* ── Export: warning ── */}
+      {view === "export-warn" && (
+        <main className="flex-1 px-6 py-8 w-full max-w-md mx-auto space-y-6">
+          <div>
+            <h2 className="text-xl font-semibold">Export Private Key</h2>
+            <p className="text-zinc-400 text-sm mt-1">
+              Use this to import your PEER wallet into MetaMask via{" "}
+              <span className="text-zinc-300">Account → Import Account → Private Key</span>.
+            </p>
+          </div>
+
+          <div className="bg-amber-950/30 border border-amber-700/50 rounded-xl p-5 space-y-3">
+            <p className="text-amber-400 text-sm font-semibold">Warning: sensitive information</p>
+            <ul className="text-sm text-zinc-300 space-y-2">
+              <li>• Anyone with your private key has permanent, irrevocable control of all funds in this wallet.</li>
+              <li>• Never share it with anyone, including anyone claiming to be support staff.</li>
+              <li>• Only paste it into MetaMask — never into websites, emails, or chats.</li>
+              <li>• Do not screenshot it or store it in any cloud service.</li>
+            </ul>
+          </div>
+
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={exportWarnChecked}
+              onChange={(e) => setExportWarnChecked(e.target.checked)}
+              className="mt-0.5 accent-amber-500"
+            />
+            <span className="text-sm text-zinc-300">
+              I understand the risks and take full responsibility for securing my private key.
+            </span>
+          </label>
+
+          <button
+            disabled={!exportWarnChecked}
+            onClick={() => setView("export-auth")}
+            className={BTN_AMBER}
+          >
+            Continue
+          </button>
+        </main>
+      )}
+
+      {/* ── Export: password ── */}
+      {view === "export-auth" && (
+        <main className="flex-1 px-6 py-8 w-full max-w-md mx-auto space-y-6">
+          <div>
+            <h2 className="text-xl font-semibold">Confirm Password</h2>
+            <p className="text-zinc-400 text-sm mt-1">
+              Enter your keystore password to decrypt and reveal your private key.
+            </p>
+          </div>
+
+          <form onSubmit={handleExportAuth} className="space-y-4">
+            <div>
+              <label className={LABEL}>Keystore Password</label>
+              <div className="relative">
+                <input
+                  type={showExportPwd ? "text" : "password"}
+                  value={exportPwd}
+                  onChange={(e) => { setExportPwd(e.target.value); setExportError(""); }}
+                  placeholder="Your keystore password"
+                  autoComplete="current-password"
+                  autoFocus
+                  className={INPUT}
+                />
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  onClick={() => setShowExportPwd((v) => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-zinc-500 hover:text-zinc-300 cursor-pointer"
+                >
+                  {showExportPwd ? "Hide" : "Show"}
+                </button>
+              </div>
+            </div>
+
+            {exportError && <p className="text-red-400 text-xs">{exportError}</p>}
+
+            <button type="submit" disabled={exporting} className={BTN_AMBER}>
+              {exporting ? "Decrypting…" : "Reveal Private Key"}
+            </button>
+          </form>
+        </main>
+      )}
+
+      {/* ── Export: reveal ── */}
+      {view === "export-reveal" && (
+        <main className="flex-1 px-6 py-8 w-full max-w-md mx-auto space-y-6">
+          <div>
+            <h2 className="text-xl font-semibold">Your Private Key</h2>
+            <p className="text-zinc-400 text-sm mt-1">
+              In MetaMask: <span className="text-zinc-300">Account → Import Account → Private Key</span>
+            </p>
+          </div>
+
+          <div className="bg-zinc-900 border border-amber-800/40 rounded-xl p-5 space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-medium text-zinc-500 uppercase tracking-wider">Private Key</p>
+              <button
+                onClick={copyExportedKey}
+                className="text-xs text-zinc-400 hover:text-white border border-zinc-700 hover:border-zinc-500 px-2.5 py-1 rounded-md transition-colors cursor-pointer"
+              >
+                {keyCopied ? "Copied!" : "Copy"}
+              </button>
+            </div>
+            <p className="font-mono text-xs text-zinc-200 break-all select-all leading-relaxed">
+              {exportedKey}
+            </p>
+          </div>
+
+          <p className="text-xs text-zinc-500 text-center">
+            Key clears automatically in {exportCountdown}s — close this screen when done.
+          </p>
+
+          <button onClick={clearExportFlow} className={BTN_PRIMARY}>
+            Done
           </button>
         </main>
       )}
