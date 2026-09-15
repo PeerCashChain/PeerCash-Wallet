@@ -2,6 +2,7 @@ use k256::ecdsa::{signature::hazmat::PrehashSigner, RecoveryId, Signature, Signi
 use rand::{rngs::OsRng, Rng};
 use serde_json::{json, Value};
 use sha3::{Digest, Keccak256};
+use std::os::windows::io::AsRawHandle;
 use std::os::windows::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
@@ -129,7 +130,54 @@ fn record_auth_result(state: &Mutex<FailedAttempts>, succeeded: bool) {
 
 // ── Miner process state ───────────────────────────────────────────────────────
 
-struct MinerProcess(Mutex<Option<Child>>);
+// Windows Job Object — kills peercash.exe automatically when the wallet process
+// exits for any reason, including forcible termination by the NSIS uninstaller.
+struct JobHandle(isize);
+unsafe impl Send for JobHandle {}
+unsafe impl Sync for JobHandle {}
+impl Drop for JobHandle {
+    fn drop(&mut self) {
+        if self.0 != 0 { unsafe { CloseHandle(self.0); } }
+    }
+}
+
+#[link(name = "kernel32")]
+extern "system" {
+    fn CreateJobObjectW(attr: *mut std::ffi::c_void, name: *const u16) -> isize;
+    fn SetInformationJobObject(job: isize, class: u32, info: *mut std::ffi::c_void, len: u32) -> i32;
+    fn AssignProcessToJobObject(job: isize, process: isize) -> i32;
+    fn CloseHandle(handle: isize) -> i32;
+}
+
+const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x2000;
+const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS: u32 = 9;
+
+#[repr(C)]
+struct JobBasicLimitInfo {
+    _per_process_user_time: i64,
+    _per_job_user_time:     i64,
+    limit_flags:            u32,
+    _min_ws:  usize, _max_ws:  usize,
+    _active:  u32,   _affinity: usize,
+    _priority: u32,  _scheduling: u32,
+}
+
+#[repr(C)]
+struct JobExtendedLimitInfo {
+    basic:              JobBasicLimitInfo,
+    _io_info:           [u64; 6],
+    _proc_mem_limit:    usize,
+    _job_mem_limit:     usize,
+    _peak_proc_mem:     usize,
+    _peak_job_mem:      usize,
+}
+
+struct MinerChild {
+    process: Child,
+    _job:    JobHandle,
+}
+
+struct MinerProcess(Mutex<Option<MinerChild>>);
 
 // ── Sync cache ────────────────────────────────────────────────────────────────
 
@@ -146,12 +194,42 @@ fn sync_cache_path(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
         .map(|d| d.join("miner-node").join("sync_cache.json"))
 }
 
-fn kill_miner_guard(guard: &mut std::sync::MutexGuard<Option<Child>>) {
-    if let Some(ref mut child) = **guard {
-        child.kill().ok();
-        child.wait().ok();
+fn kill_miner_guard(guard: &mut std::sync::MutexGuard<Option<MinerChild>>) {
+    if let Some(ref mut mc) = **guard {
+        mc.process.kill().ok();
+        mc.process.wait().ok();
     }
-    **guard = None;
+    **guard = None; // drops MinerChild → drops JobHandle → OS kills peercash.exe
+}
+
+/// Graceful shutdown: Ctrl+C via taskkill, wait up to 10 s for LevelDB flush, hard-kill fallback.
+fn graceful_miner_shutdown(guard: &mut std::sync::MutexGuard<Option<MinerChild>>) {
+    let pid = match guard.as_ref() {
+        Some(mc) => mc.process.id(),
+        None => return,
+    };
+
+    let _ = Command::new("taskkill")
+        .args(["/pid", &pid.to_string()])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+
+    for _ in 0..20 {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        if let Some(ref mut mc) = **guard {
+            if matches!(mc.process.try_wait(), Ok(Some(_))) {
+                **guard = None;
+                return;
+            }
+        } else {
+            return;
+        }
+    }
+
+    kill_miner_guard(guard);
 }
 
 // ── Address derivation ────────────────────────────────────────────────────────
@@ -611,8 +689,8 @@ async fn start_miner(
     let mut guard = miner_state.0.lock().map_err(|e| e.to_string())?;
 
     // Check if already running
-    if let Some(ref mut child) = *guard {
-        match child.try_wait() {
+    if let Some(ref mut mc) = *guard {
+        match mc.process.try_wait() {
             Ok(None) => return Err("Miner is already running".to_string()),
             _ => { *guard = None; } // exited — allow restart
         }
@@ -702,7 +780,24 @@ async fn start_miner(
         .spawn()
         .map_err(|e| format!("Failed to spawn miner: {e}\nBinary: {}", binary_path.display()))?;
 
-    *guard = Some(child);
+    // Assign peercash.exe to a Job Object with KILL_ON_JOB_CLOSE so the OS
+    // terminates it if peercash-wallet.exe exits for any reason (crash, uninstall).
+    let job = unsafe { CreateJobObjectW(std::ptr::null_mut(), std::ptr::null()) };
+    if job != 0 {
+        let mut info: JobExtendedLimitInfo = unsafe { std::mem::zeroed() };
+        info.basic.limit_flags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        unsafe {
+            SetInformationJobObject(
+                job,
+                JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS,
+                &mut info as *mut _ as *mut _,
+                std::mem::size_of::<JobExtendedLimitInfo>() as u32,
+            );
+            AssignProcessToJobObject(job, child.as_raw_handle() as isize);
+        }
+    }
+
+    *guard = Some(MinerChild { process: child, _job: JobHandle(job) });
     Ok(())
 }
 
@@ -712,7 +807,7 @@ async fn start_miner(
 async fn stop_miner(miner_state: tauri::State<'_, MinerProcess>) -> Result<(), String> {
     let pid = {
         let guard = miner_state.0.lock().map_err(|e| e.to_string())?;
-        guard.as_ref().map(|c| c.id())
+        guard.as_ref().map(|c| c.process.id())
     };
 
     if let Some(pid) = pid {
@@ -727,8 +822,8 @@ async fn stop_miner(miner_state: tauri::State<'_, MinerProcess>) -> Result<(), S
         for _ in 0..20 {
             std::thread::sleep(std::time::Duration::from_millis(500));
             let mut guard = miner_state.0.lock().map_err(|e| e.to_string())?;
-            if let Some(ref mut child) = *guard {
-                if matches!(child.try_wait(), Ok(Some(_))) {
+            if let Some(ref mut mc) = *guard {
+                if matches!(mc.process.try_wait(), Ok(Some(_))) {
                     *guard = None;
                     return Ok(());
                 }
@@ -770,8 +865,8 @@ async fn get_miner_pid(miner_state: tauri::State<'_, MinerProcess>) -> Result<Op
     let mut guard = miner_state.0.lock().map_err(|e| e.to_string())?;
     match guard.as_mut() {
         None => Ok(None),
-        Some(child) => match child.try_wait().map_err(|e| e.to_string())? {
-            None => Ok(Some(child.id())),
+        Some(mc) => match mc.process.try_wait().map_err(|e| e.to_string())? {
+            None => Ok(Some(mc.process.id())),
             Some(_) => {
                 *guard = None;
                 Ok(None)
@@ -827,7 +922,7 @@ pub fn run() {
             if let tauri::WindowEvent::Destroyed = event {
                 let state: tauri::State<MinerProcess> = window.state();
                 if let Ok(mut guard) = state.0.lock() {
-                    kill_miner_guard(&mut guard);
+                    graceful_miner_shutdown(&mut guard);
                 };
             }
         })
