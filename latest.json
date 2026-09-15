@@ -1,11 +1,11 @@
 {
-  "version": "0.1.3",
-  "notes": "Export private key to MetaMask, Settings screen, persistent auth lockout, clipboard security fix.",
+  "version": "0.1.4",
+  "notes": "Auto-update support, HTTPS RPC endpoint, gas price safety cap, EIP-55 address checksum validation, private key memory zeroing.",
   "pub_date": "2026-09-15T00:00:00Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRZHZlVEtoZzA5ZEN4ME12elJpamI0bHUyUmxBTWhqZDVObWtZUkJWSDk4VzUwako4SjAxcmJoS0ozN2NnUTI4V0FLSHZWY2lKK3djR0FjOCswZnJKVERTRk80Mnhob3dnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5NDkzODI4CWZpbGU6UGVlckNhc2ggV2FsbGV0XzAuMS4zX3g2NC1zZXR1cC5leGUKSnhPTnd4RzhhUXNVdFEzTFVGOUxwQ3dPQ3ZQZUJabm9DSkFKc2o0cmNLdUVNa3VxWWNqeW1RSlN5RWdJVU1WdncyMWt1NG9lNlZZemxaSmFaazd2Q1E9PQo=",
-      "url": "https://github.com/PeerCashChain/PeerCash-Wallet/releases/download/v0.1.3/PeerCash-Wallet_0.1.3_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRZHZlVEtoZzA5ZEpOUXMvYTBVSmdVNXFxOWtCTHl4NjUxaDNUV0o3dGdycjRJbHViNk9ZY1ByUU1DV29iVzl4M0lsY0pxaWRBUi80R1cxUVVodHplNmVEQ3Q3L0NkWlFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5NDk3OTkzCWZpbGU6UGVlckNhc2ggV2FsbGV0XzAuMS40X3g2NC1zZXR1cC5leGUKVWNDMi9DUlRDSFpQK0ViOXVmc3VkRklDcFd5WXFkanVoSm5uRVh4ZElvbThDd0ZML1NHS203QnVjamdxWVJhYVRjdVVSLzZFYitYbTNSVm1uRnBoQ0E9PQo=",
+      "url": "https://github.com/PeerCashChain/PeerCash-Wallet/releases/download/v0.1.4/PeerCash-Wallet_0.1.4_x64-setup.exe"
     }
   }
 }
