@@ -154,6 +154,7 @@ export default function Wallet({ address }: Props) {
   }
 
   function clearExportFlow() {
+    navigator.clipboard.writeText("").catch(() => {});
     setExportedKey("");
     setExportPwd("");
     setExportError("");

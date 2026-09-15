@@ -5,7 +5,7 @@ use sha3::{Digest, Keccak256};
 use std::os::windows::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use tauri::Manager;
 use zeroize::Zeroizing;
 
@@ -43,6 +43,63 @@ struct FailedAttempts {
 
 struct AuthState(Mutex<FailedAttempts>);
 
+#[derive(serde::Serialize, serde::Deserialize)]
+struct PersistedAuth {
+    count: u32,
+    locked_until_unix: Option<u64>,
+}
+
+fn auth_state_path() -> Option<std::path::PathBuf> {
+    std::env::var("APPDATA").ok().map(|d| {
+        std::path::PathBuf::from(d)
+            .join("com.peercash.wallet")
+            .join("auth_state.json")
+    })
+}
+
+fn load_auth_state() -> FailedAttempts {
+    let path = match auth_state_path() {
+        Some(p) => p,
+        None => return FailedAttempts { count: 0, locked_until: None },
+    };
+    let data = match std::fs::read_to_string(&path) {
+        Ok(d) => d,
+        Err(_) => return FailedAttempts { count: 0, locked_until: None },
+    };
+    let saved: PersistedAuth = match serde_json::from_str(&data) {
+        Ok(s) => s,
+        Err(_) => return FailedAttempts { count: 0, locked_until: None },
+    };
+    let locked_until = saved.locked_until_unix.and_then(|unix_secs| {
+        let now_unix = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if unix_secs > now_unix {
+            Some(Instant::now() + Duration::from_secs(unix_secs - now_unix))
+        } else {
+            None
+        }
+    });
+    FailedAttempts { count: saved.count, locked_until }
+}
+
+fn save_auth_state(guard: &FailedAttempts) {
+    let Some(path) = auth_state_path() else { return };
+    let locked_until_unix = guard.locked_until.map(|instant| {
+        let remaining = instant.saturating_duration_since(Instant::now());
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+            + remaining.as_secs()
+    });
+    if let Ok(json) = serde_json::to_string(&PersistedAuth { count: guard.count, locked_until_unix }) {
+        let _ = std::fs::create_dir_all(path.parent().unwrap_or(&path));
+        let _ = std::fs::write(&path, json);
+    }
+}
+
 fn check_auth_lock(state: &Mutex<FailedAttempts>) -> Result<(), String> {
     let guard = state.lock().unwrap();
     if let Some(until) = guard.locked_until {
@@ -67,6 +124,7 @@ fn record_auth_result(state: &Mutex<FailedAttempts>, succeeded: bool) {
             guard.locked_until = Some(Instant::now() + Duration::from_secs(delay_secs));
         }
     }
+    save_auth_state(&guard);
 }
 
 // ── Miner process state ───────────────────────────────────────────────────────
@@ -711,11 +769,10 @@ async fn get_miner_pid(miner_state: tauri::State<'_, MinerProcess>) -> Result<Op
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(MinerProcess(Mutex::new(None)))
-        .manage(AuthState(Mutex::new(FailedAttempts {
-            count: 0,
-            locked_until: None,
-        })))
+        .manage(AuthState(Mutex::new(load_auth_state())))
         .invoke_handler(tauri::generate_handler![
             rpc_call,
             miner_rpc_call,
