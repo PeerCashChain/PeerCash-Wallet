@@ -1,11 +1,11 @@
 {
-  "version": "0.1.7",
-  "notes": "Chain state now retained across restarts — CTRL_BREAK shutdown triggers go-ethereum trie flush. Version number shown in UI.",
-  "pub_date": "2026-09-16T00:00:00Z",
+  "version": "0.1.8",
+  "notes": "Fixes chain re-sync on restart - the miner now shuts down cleanly so go-ethereum flushes its state to disk. Previously the shutdown signal never reached the miner, so each stop hard-killed the node and the next start re-synced from an old block.",
+  "pub_date": "2026-09-16T17:05:42Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRZHZlVEtoZzA5ZERxTWtlLzJzdjBhZzI2VVJsUWQxTmxqaGV5NGg5UENoR2luWGIraWVnczdkd201MWZURThldDBmM3Z4ZTl1WENLV0pYZzdnSjU4cHpaeGNReFlHSHdVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5NTE5MjU1CWZpbGU6UGVlckNhc2ggV2FsbGV0XzAuMS43X3g2NC1zZXR1cC5leGUKUk5vQ01TTWlhWEkrTnpaSEU3T25UeW1kUEJRdGZUOElUWnNhZG8vV0pzNmNwTEFRNnRIV2wxVktKZnFPOFNnYUovTjFnM0tyQzJvK2ljK21YSCtLQkE9PQo=",
-      "url": "https://github.com/PeerCashChain/PeerCash-Wallet/releases/download/v0.1.7/PeerCash-Wallet_0.1.7_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRZHZlVEtoZzA5ZEFldkdZRUpqbWF2c0c3UmV3MHZCczk2MlVSSnNqbVNXOHZraFlteENnYnYyTDlhWmJZR3dvYU5QQmt2azlzNk1SbXpPalM4bTJYUFVWZmM0VDBvSGdvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5NTcxMDgyCWZpbGU6UGVlckNhc2ggV2FsbGV0XzAuMS44X3g2NC1zZXR1cC5leGUKVFdER04vbHFtSWRpcytjcE5wRXdiMmtxditGRHkvTm9BbjM2eHFOdmhRSzU1Y3hzTmlLdFEvVFVHcUkwbnROV2FWbERJcGFqRnlXSHpLc1NQNy8rQUE9PQo=",
+      "url": "https://github.com/PeerCashChain/PeerCash-Wallet/releases/download/v0.1.8/PeerCash-Wallet_0.1.8_x64-setup.exe"
     }
   }
 }
