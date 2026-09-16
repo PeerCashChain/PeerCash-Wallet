@@ -150,6 +150,38 @@ extern "system" {
     fn AssignProcessToJobObject(job: isize, process: isize) -> i32;
     fn CloseHandle(handle: isize) -> i32;
     fn GenerateConsoleCtrlEvent(ctrl_event: u32, process_group_id: u32) -> i32;
+    fn AttachConsole(process_id: u32) -> i32;
+    fn FreeConsole() -> i32;
+    fn SetConsoleCtrlHandler(handler: *mut std::ffi::c_void, add: i32) -> i32;
+}
+
+/// Attach to the miner's hidden console and deliver a CTRL_BREAK to its process group.
+///
+/// `GenerateConsoleCtrlEvent` only reaches a process group that shares the *caller's*
+/// console. The wallet is a GUI process with no console, and the miner was spawned with
+/// CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP — so it owns its own hidden console that
+/// we don't share. Without `AttachConsole(miner_pid)` first, the event is delivered
+/// nowhere: geth never runs its SIGINT handler, never calls blockchain.Stop() to flush
+/// the trie, and gets hard-killed on timeout — losing all unpersisted state so the next
+/// start rewinds tens of thousands of blocks. Attaching to the miner's console fixes the
+/// delivery path; targeting the miner's own group id (== pid, since CREATE_NEW_PROCESS_GROUP)
+/// keeps the event off our own process.
+fn signal_ctrl_break(pid: u32) -> bool {
+    unsafe {
+        // Detach from any console we may already hold (e.g. `tauri dev` launched from a
+        // terminal) so AttachConsole can succeed. No-op for a windowed release build.
+        FreeConsole();
+        if AttachConsole(pid) == 0 {
+            return false;
+        }
+        // Ignore Ctrl+C in our own process while the event is in flight.
+        SetConsoleCtrlHandler(std::ptr::null_mut(), 1);
+        let ok = GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, pid) != 0;
+        // The event is already queued to geth's handler — detach and restore immediately.
+        FreeConsole();
+        SetConsoleCtrlHandler(std::ptr::null_mut(), 0);
+        ok
+    }
 }
 
 const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x2000;
@@ -216,7 +248,7 @@ fn graceful_miner_shutdown(guard: &mut std::sync::MutexGuard<Option<MinerChild>>
     };
 
     // Send CTRL_BREAK to the process group (pid == group leader when CREATE_NEW_PROCESS_GROUP was used).
-    unsafe { GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, pid); }
+    signal_ctrl_break(pid);
 
     for _ in 0..20 {
         std::thread::sleep(std::time::Duration::from_millis(500));
@@ -812,7 +844,7 @@ async fn stop_miner(miner_state: tauri::State<'_, MinerProcess>) -> Result<(), S
     };
 
     if let Some(pid) = pid {
-        unsafe { GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, pid); }
+        signal_ctrl_break(pid);
 
         for _ in 0..20 {
             std::thread::sleep(std::time::Duration::from_millis(500));
