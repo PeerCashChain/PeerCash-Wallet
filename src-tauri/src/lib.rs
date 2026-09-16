@@ -11,6 +11,8 @@ use tauri::Manager;
 use zeroize::Zeroizing;
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+const CTRL_BREAK_EVENT: u32 = 1;
 
 const CHAIN_ID: u64 = 563321;
 const GAS_LIMIT_TRANSFER: u64 = 21_000;
@@ -147,6 +149,7 @@ extern "system" {
     fn SetInformationJobObject(job: isize, class: u32, info: *mut std::ffi::c_void, len: u32) -> i32;
     fn AssignProcessToJobObject(job: isize, process: isize) -> i32;
     fn CloseHandle(handle: isize) -> i32;
+    fn GenerateConsoleCtrlEvent(ctrl_event: u32, process_group_id: u32) -> i32;
 }
 
 const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x2000;
@@ -202,20 +205,18 @@ fn kill_miner_guard(guard: &mut std::sync::MutexGuard<Option<MinerChild>>) {
     **guard = None; // drops MinerChild → drops JobHandle → OS kills peercash.exe
 }
 
-/// Graceful shutdown: Ctrl+C via taskkill, wait up to 10 s for LevelDB flush, hard-kill fallback.
+/// Graceful shutdown: CTRL_BREAK to the process group, wait up to 10 s for trie flush, hard-kill fallback.
+/// taskkill without /F has no effect on CREATE_NO_WINDOW processes (no window to receive WM_CLOSE).
+/// GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT) reaches Go's SetConsoleCtrlHandler even without a console
+/// window, triggering go-ethereum's SIGTERM handler which calls blockchain.Stop() to flush the trie.
 fn graceful_miner_shutdown(guard: &mut std::sync::MutexGuard<Option<MinerChild>>) {
     let pid = match guard.as_ref() {
         Some(mc) => mc.process.id(),
         None => return,
     };
 
-    let _ = Command::new("taskkill")
-        .args(["/pid", &pid.to_string()])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .creation_flags(CREATE_NO_WINDOW)
-        .status();
+    // Send CTRL_BREAK to the process group (pid == group leader when CREATE_NEW_PROCESS_GROUP was used).
+    unsafe { GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, pid); }
 
     for _ in 0..20 {
         std::thread::sleep(std::time::Duration::from_millis(500));
@@ -776,7 +777,7 @@ async fn start_miner(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::from(log_file))
-        .creation_flags(CREATE_NO_WINDOW)
+        .creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP)
         .spawn()
         .map_err(|e| format!("Failed to spawn miner: {e}\nBinary: {}", binary_path.display()))?;
 
@@ -811,13 +812,7 @@ async fn stop_miner(miner_state: tauri::State<'_, MinerProcess>) -> Result<(), S
     };
 
     if let Some(pid) = pid {
-        let _ = Command::new("taskkill")
-            .args(["/pid", &pid.to_string()])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .creation_flags(CREATE_NO_WINDOW)
-            .status();
+        unsafe { GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, pid); }
 
         for _ in 0..20 {
             std::thread::sleep(std::time::Duration::from_millis(500));

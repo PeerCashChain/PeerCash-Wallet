@@ -1,11 +1,11 @@
 {
-  "version": "0.1.6",
-  "notes": "Graceful miner shutdown on app close — flushes chain state to disk before exit. Miner process auto-killed on uninstall via Windows Job Object.",
+  "version": "0.1.7",
+  "notes": "Chain state now retained across restarts — CTRL_BREAK shutdown triggers go-ethereum trie flush. Version number shown in UI.",
   "pub_date": "2026-09-15T00:00:00Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRZHZlVEtoZzA5ZERKQncrNys0S3Y5OGx2YXFqNkNWdXdZeU94WGxnNHJtTUo4ejVoMG44WEFGcmJlZEtwRWNYWWx4VXhXOUdpZTJUN0tsMmpkUmxmYkNSd0pZM2M3VWc4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5NTEzNTEyCWZpbGU6UGVlckNhc2ggV2FsbGV0XzAuMS42X3g2NC1zZXR1cC5leGUKck9BVHRLRzZ5cm1jWGxpdHdleVF3NEpKZFJKR0V4ZUkyWFhsaGNrY09CMkdHb2MwR1hDeE94UDRUNFNRM21LWXhuV1NUT1RCQlQzRXRxWWMxc3cvQmc9PQo=",
-      "url": "https://github.com/PeerCashChain/PeerCash-Wallet/releases/download/v0.1.6/PeerCash-Wallet_0.1.6_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRZHZlVEtoZzA5ZE13S3pJbVJtV2YzY3lvS2RnWE9xV2lVOGN6ekJkZzRibmRpVWNWV3VmdktkaEJPQmN2RjJYQWhTUWE5NGVyTUowK3FvVjJ2TGtNOU1JWWtCVjhKQVFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5NTE5MjQzCWZpbGU6UGVlckNhc2ggV2FsbGV0XzAuMS43X3g2NC1zZXR1cC5leGUKRGhnSStoUDhwZ08ySUoxS0Y5MXNpaHlMQU5SNGVhNzhwdktRZ0ludjk5ZE55NDhaaUQ1Qy9oU0Z4QlhPL1UzenFDZ3lmQXJRQjMyeHl5U1owUlZhRFE9PQo=",
+      "url": "https://github.com/PeerCashChain/PeerCash-Wallet/releases/download/v0.1.7/PeerCash-Wallet_0.1.7_x64-setup.exe"
     }
   }
 }

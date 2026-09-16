@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { getVersion } from "@tauri-apps/api/app";
 import { getAccount } from "./lib/account";
 import Setup from "./screens/Setup";
 import Wallet from "./screens/Wallet";
@@ -35,6 +36,7 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>("loading");
   const [address, setAddress] = useState("");
   const [tab, setTab] = useState<Tab>("wallet");
+  const [version, setVersion] = useState("");
 
   // ── Update state ──────────────────────────────────────────────────────────
   const [update, setUpdate] = useState<Update | null>(null);
@@ -42,6 +44,7 @@ export default function App() {
   const [downloadPct, setDownloadPct] = useState(0);
 
   useEffect(() => {
+    getVersion().then(setVersion).catch(() => {});
     getAccount()
       .then((addr) => {
         if (addr) {
@@ -191,6 +194,11 @@ export default function App() {
         }
       </div>
       <TabBar tab={tab} onSwitch={setTab} />
+      {version && (
+        <div className="bg-zinc-950 text-center pb-1">
+          <span className="text-[10px] text-zinc-700">v{version}</span>
+        </div>
+      )}
     </div>
   );
 }
