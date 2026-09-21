@@ -7,6 +7,7 @@ import {
 import { getBalance, getBlockNumber, getTransactionReceipt } from "../lib/rpc";
 import { sendTransaction, exportPrivateKey } from "../lib/account";
 import { CHAIN_NAME, CHAIN_ID, CURRENCY_SYMBOL } from "../config";
+import QRCode from "qrcode";
 
 interface Props {
   address: string;
@@ -37,6 +38,8 @@ export default function Wallet({ address }: Props) {
   const [errorMsg, setErrorMsg] = useState("");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [addrCopied, setAddrCopied] = useState(false);
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [qrEnlarged, setQrEnlarged] = useState(false);
 
   // ── View routing ──────────────────────────────────────────────────────────
   const [view, setView] = useState<View>("main");
@@ -88,6 +91,21 @@ export default function Wallet({ address }: Props) {
     const id = setInterval(fetchData, 12_000);
     return () => clearInterval(id);
   }, [fetchData]);
+
+  // ── Receive-address QR code ───────────────────────────────────────────────
+  // Rendered at high resolution so it stays crisp both inline and enlarged.
+  useEffect(() => {
+    let live = true;
+    QRCode.toDataURL(address, {
+      width: 512,
+      margin: 1,
+      errorCorrectionLevel: "M",
+      color: { dark: "#000000", light: "#ffffff" },
+    })
+      .then((url) => { if (live) setQrDataUrl(url); })
+      .catch(() => { if (live) setQrDataUrl(null); });
+    return () => { live = false; };
+  }, [address]);
 
   // ── Receipt poller ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -312,14 +330,36 @@ export default function Wallet({ address }: Props) {
           {/* Address */}
           <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
             <p className={LABEL}>Your Address</p>
-            <div className="flex items-center gap-3">
-              <span className="font-mono text-sm text-zinc-200 truncate">{address}</span>
-              <button
-                onClick={copyAddress}
-                className="shrink-0 text-xs text-zinc-400 hover:text-white border border-zinc-700 hover:border-zinc-500 px-3 py-1 rounded-md transition-colors cursor-pointer"
-              >
-                {addrCopied ? "Copied!" : "Copy"}
-              </button>
+            <div className="flex items-center gap-4">
+              {qrDataUrl && (
+                <button
+                  onClick={() => setQrEnlarged(true)}
+                  title="Tap to enlarge"
+                  aria-label="Enlarge receive-address QR code"
+                  className="shrink-0 rounded-lg bg-white p-1.5 hover:ring-2 hover:ring-peer/50 transition-shadow cursor-pointer"
+                >
+                  <img src={qrDataUrl} alt="Receive address QR code" className="w-24 h-24 block" />
+                </button>
+              )}
+              <div className="min-w-0 flex-1 space-y-2">
+                <span className="block font-mono text-sm text-zinc-200 break-all">{address}</span>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={copyAddress}
+                    className="shrink-0 text-xs text-zinc-400 hover:text-white border border-zinc-700 hover:border-zinc-500 px-3 py-1 rounded-md transition-colors cursor-pointer"
+                  >
+                    {addrCopied ? "Copied!" : "Copy"}
+                  </button>
+                  {qrDataUrl && (
+                    <button
+                      onClick={() => setQrEnlarged(true)}
+                      className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors cursor-pointer"
+                    >
+                      Enlarge QR
+                    </button>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
 
@@ -671,6 +711,39 @@ export default function Wallet({ address }: Props) {
             Done
           </button>
         </main>
+      )}
+
+      {/* ── Enlarged receive-address QR (overlay) ── */}
+      {qrEnlarged && qrDataUrl && (
+        <div
+          onClick={() => setQrEnlarged(false)}
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-6 cursor-pointer"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 w-full max-w-sm flex flex-col items-center gap-4 cursor-default"
+          >
+            <p className={LABEL}>Scan to send {CURRENCY_SYMBOL} to this address</p>
+            <div className="rounded-xl bg-white p-4">
+              <img src={qrDataUrl} alt="Receive address QR code" className="w-64 h-64 block" />
+            </div>
+            <p className="font-mono text-xs text-zinc-300 break-all text-center leading-relaxed">{address}</p>
+            <div className="flex gap-3 w-full">
+              <button
+                onClick={copyAddress}
+                className="flex-1 text-sm text-zinc-300 hover:text-white border border-zinc-700 hover:border-zinc-500 py-2 rounded-lg transition-colors cursor-pointer"
+              >
+                {addrCopied ? "Copied!" : "Copy address"}
+              </button>
+              <button
+                onClick={() => setQrEnlarged(false)}
+                className="flex-1 bg-peer hover:bg-peer-dark text-white text-sm font-medium py-2 rounded-lg transition-colors cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
