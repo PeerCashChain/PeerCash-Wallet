@@ -1,11 +1,11 @@
 {
-  "version": "0.1.8",
-  "notes": "Fixes chain re-sync on restart - the miner now shuts down cleanly so go-ethereum flushes its state to disk. Previously the shutdown signal never reached the miner, so each stop hard-killed the node and the next start re-synced from an old block.",
-  "pub_date": "2026-09-16T17:05:42Z",
+  "version": "0.1.9",
+  "notes": "Adds a scannable QR code of your receive address on the main wallet screen (tap to enlarge for scanning from another device). Copy option unchanged. Closes #2.",
+  "pub_date": "2026-09-22T01:08:09Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRZHZlVEtoZzA5ZEFldkdZRUpqbWF2c0c3UmV3MHZCczk2MlVSSnNqbVNXOHZraFlteENnYnYyTDlhWmJZR3dvYU5QQmt2azlzNk1SbXpPalM4bTJYUFVWZmM0VDBvSGdvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5NTcxMDgyCWZpbGU6UGVlckNhc2ggV2FsbGV0XzAuMS44X3g2NC1zZXR1cC5leGUKVFdER04vbHFtSWRpcytjcE5wRXdiMmtxditGRHkvTm9BbjM2eHFOdmhRSzU1Y3hzTmlLdFEvVFVHcUkwbnROV2FWbERJcGFqRnlXSHpLc1NQNy8rQUE9PQo=",
-      "url": "https://github.com/PeerCashChain/PeerCash-Wallet/releases/download/v0.1.8/PeerCash-Wallet_0.1.8_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRZHZlVEtoZzA5ZEMweVpaZXVTaEc5aWhFQ1BqeGtFQWpjbDhveFkyY21CNnRiTUE0TjdnTFJjbVdrbmhDR05NYk1vc0lJM0owNTdtOW1GV0h1MzE4aDhHdXUzcmwvUncwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMDM2ODQ0CWZpbGU6UGVlckNhc2ggV2FsbGV0XzAuMS45X3g2NC1zZXR1cC5leGUKQ3puUTBuQjVTQlY0RXd5SFdTRENoaHBQZDRUc1ZjbkZQY1M3NnRTOXNVNVlZa3poUVhtNVhqbmxnSXArS0FQakFabVBjYUtSYXQrWTFVN01tbU9FRGc9PQo=",
+      "url": "https://github.com/PeerCashChain/PeerCash-Wallet/releases/download/v0.1.9/PeerCash-Wallet_0.1.9_x64-setup.exe"
     }
   }
 }
