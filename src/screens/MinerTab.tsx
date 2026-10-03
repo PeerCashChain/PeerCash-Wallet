@@ -8,10 +8,11 @@ import {
   type MinerStatus,
   type MinerPollResult,
 } from "../lib/miner";
-import { CURRENCY_SYMBOL } from "../config";
+import type { NetworkInfo } from "../config";
 
 interface Props {
   address: string;
+  net: NetworkInfo;
 }
 
 const LABEL = "block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-1.5";
@@ -37,10 +38,10 @@ function statusLabel(s: MinerStatus) {
   }[s];
 }
 
-function statusSubtext(poll: MinerPollResult, elapsed: number): string {
+function statusSubtext(poll: MinerPollResult, elapsed: number, symbol: string): string {
   const t = elapsed > 0 ? ` (${elapsed}s)` : "";
   switch (poll.status) {
-    case "stopped":  return `Start to begin earning ${CURRENCY_SYMBOL}`;
+    case "stopped":  return `Start to begin earning ${symbol}`;
     case "starting": return `Waiting for the local RPC to come online…${t}`;
     case "syncing":
       if (poll.syncInfo)       return poll.syncInfo.current === 0
@@ -89,7 +90,7 @@ function SyncProgress({
   );
 }
 
-export default function MinerTab({ address }: Props) {
+export default function MinerTab({ address, net }: Props) {
   const [running, setRunning] = useState(false);
   const [poll, setPoll] = useState<MinerPollResult>({ status: "stopped" });
   const [threads, setThreads] = useState(2);
@@ -230,7 +231,7 @@ export default function MinerTab({ address }: Props) {
             </span>
           </div>
 
-          <p className="text-sm text-zinc-500">{statusSubtext(poll, elapsed)}</p>
+          <p className="text-sm text-zinc-500">{statusSubtext(poll, elapsed, net.currencySymbol)}</p>
 
           {/* Last-known sync progress — shown when stopped and cache exists */}
           {isStopped && syncCache && syncCache.highest > 0 && (

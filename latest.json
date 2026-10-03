@@ -1,11 +1,11 @@
 {
-  "version": "0.1.9",
-  "notes": "Adds a scannable QR code of your receive address on the main wallet screen (tap to enlarge for scanning from another device). Copy option unchanged. Closes #2.",
-  "pub_date": "2026-09-22T01:08:09Z",
+  "version": "0.2.0",
+  "notes": "PeerCash mainnet is live (chainId 620156). This release connects the wallet and miner to mainnet with real RandomX proof-of-work. New installs default to mainnet.",
+  "pub_date": "2026-10-03T23:03:28Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRZHZlVEtoZzA5ZEMweVpaZXVTaEc5aWhFQ1BqeGtFQWpjbDhveFkyY21CNnRiTUE0TjdnTFJjbVdrbmhDR05NYk1vc0lJM0owNTdtOW1GV0h1MzE4aDhHdXUzcmwvUncwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMDM2ODQ0CWZpbGU6UGVlckNhc2ggV2FsbGV0XzAuMS45X3g2NC1zZXR1cC5leGUKQ3puUTBuQjVTQlY0RXd5SFdTRENoaHBQZDRUc1ZjbkZQY1M3NnRTOXNVNVlZa3poUVhtNVhqbmxnSXArS0FQakFabVBjYUtSYXQrWTFVN01tbU9FRGc9PQo=",
-      "url": "https://github.com/PeerCashChain/PeerCash-Wallet/releases/download/v0.1.9/PeerCash-Wallet_0.1.9_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRZHZlVEtoZzA5ZEVrWi9BUXZ6SHFmZFVnYVA3U0NiVk5PTjllekR0ZVpTREFza0t4cGh0cmMzVXNPbTk4YWNFM3UvK091RFlMaDYwbTZ0MDBjeXZ0N0puZy9Pb2kvRWdzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMDY4NjA4CWZpbGU6UGVlckNhc2ggV2FsbGV0XzAuMi4wX3g2NC1zZXR1cC5leGUKU1JSSmZIZEdzQVBsbTF3THp1UC9zLy8yYnN4THJrbFNQWnBKbHNiNEZFdVBVRTluNVZPU2EvVENsUGRkRWZxenI1Z2JDdVR2WXNEVTVuOGRzWTZ6Qmc9PQo=",
+      "url": "https://github.com/PeerCashChain/PeerCash-Wallet/releases/download/v0.2.0/PeerCash-Wallet_0.2.0_x64-setup.exe"
     }
   }
 }

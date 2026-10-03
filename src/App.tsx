@@ -3,6 +3,7 @@ import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { getVersion } from "@tauri-apps/api/app";
 import { getAccount } from "./lib/account";
+import { getNetwork, type NetworkInfo } from "./config";
 import Setup from "./screens/Setup";
 import Wallet from "./screens/Wallet";
 import MinerTab from "./screens/MinerTab";
@@ -37,6 +38,7 @@ export default function App() {
   const [address, setAddress] = useState("");
   const [tab, setTab] = useState<Tab>("wallet");
   const [version, setVersion] = useState("");
+  const [net, setNet] = useState<NetworkInfo | null>(null);
 
   // ── Update state ──────────────────────────────────────────────────────────
   const [update, setUpdate] = useState<Update | null>(null);
@@ -45,8 +47,11 @@ export default function App() {
 
   useEffect(() => {
     getVersion().then(setVersion).catch(() => {});
-    getAccount()
-      .then((addr) => {
+    // Resolve the active network and account together; both are needed before we
+    // leave the loading screen (the wallet renders the network's name/symbol).
+    Promise.all([getNetwork(), getAccount().catch(() => null)])
+      .then(([network, addr]) => {
+        setNet(network);
         if (addr) {
           setAddress(addr);
           setScreen("wallet");
@@ -188,10 +193,10 @@ export default function App() {
     <div className="h-screen flex flex-col overflow-hidden">
       <UpdateBanner />
       <div className="flex-1 overflow-auto min-h-0">
-        {tab === "wallet"
-          ? <Wallet address={address} />
-          : <MinerTab address={address} />
-        }
+        {net && (tab === "wallet"
+          ? <Wallet key={net.key} address={address} net={net} onNetworkChange={setNet} />
+          : <MinerTab key={net.key} address={address} net={net} />
+        )}
       </div>
       <TabBar tab={tab} onSwitch={setTab} />
       {version && (

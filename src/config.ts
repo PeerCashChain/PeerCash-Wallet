@@ -1,7 +1,28 @@
-export const RPC_URL = "https://testrpc.peercash.io";
-export const CHAIN_ID = 563321;
-export const CHAIN_NAME = "PeerCash Testnet";
-export const CURRENCY_SYMBOL = "PEER";
+import { invoke } from "@tauri-apps/api/core";
 
-// Miner local node — queried by MinerTab for sync/hashrate status
-export const MINER_LOCAL_RPC = "http://127.0.0.1:8546";
+// Network definitions live in the Rust backend (src-tauri/src/lib.rs → NETWORKS),
+// the single source of truth. The frontend only reads/sets the selection — chain
+// id, RPC URL, bootnodes and genesis are all resolved backend-side.
+export interface NetworkInfo {
+  key: string;
+  name: string;
+  chainId: number;
+  rpcUrl: string;
+  currencySymbol: string;
+  decimals: number;
+}
+
+/** The currently selected network. */
+export function getNetwork(): Promise<NetworkInfo> {
+  return invoke<NetworkInfo>("get_network");
+}
+
+/** All networks the wallet can switch to. */
+export function listNetworks(): Promise<NetworkInfo[]> {
+  return invoke<NetworkInfo[]>("list_networks");
+}
+
+/** Persist and switch the active network. Stops the miner backend-side. */
+export function setNetwork(key: string): Promise<NetworkInfo> {
+  return invoke<NetworkInfo>("set_network", { key });
+}

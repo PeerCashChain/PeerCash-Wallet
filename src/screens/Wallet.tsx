@@ -6,11 +6,13 @@ import {
 } from "react";
 import { getBalance, getBlockNumber, getTransactionReceipt } from "../lib/rpc";
 import { sendTransaction, exportPrivateKey } from "../lib/account";
-import { CHAIN_NAME, CHAIN_ID, CURRENCY_SYMBOL } from "../config";
+import { listNetworks, setNetwork, type NetworkInfo } from "../config";
 import QRCode from "qrcode";
 
 interface Props {
   address: string;
+  net: NetworkInfo;
+  onNetworkChange: (net: NetworkInfo) => void;
 }
 
 type Status = "connecting" | "connected" | "error";
@@ -30,8 +32,10 @@ const BTN_AMBER =
 const LABEL =
   "block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-1.5";
 
-export default function Wallet({ address }: Props) {
+export default function Wallet({ address, net, onNetworkChange }: Props) {
   // ── Network state ─────────────────────────────────────────────────────────
+  const [networks, setNetworks] = useState<NetworkInfo[]>([]);
+  const [switching, setSwitching] = useState(false);
   const [balance, setBalance] = useState<string | null>(null);
   const [blockNumber, setBlockNumber] = useState<number | null>(null);
   const [status, setStatus] = useState<Status>("connecting");
@@ -91,6 +95,23 @@ export default function Wallet({ address }: Props) {
     const id = setInterval(fetchData, 12_000);
     return () => clearInterval(id);
   }, [fetchData]);
+
+  // ── Network selector ──────────────────────────────────────────────────────
+  useEffect(() => {
+    listNetworks().then(setNetworks).catch(() => {});
+  }, []);
+
+  // Persist + switch. On success App remounts this screen with the new network
+  // (keyed on net.key), so balances and sync state reset cleanly.
+  async function handleSwitchNetwork(key: string) {
+    if (key === net.key || switching) return;
+    setSwitching(true);
+    try {
+      onNetworkChange(await setNetwork(key));
+    } catch {
+      setSwitching(false);
+    }
+  }
 
   // ── Receive-address QR code ───────────────────────────────────────────────
   // Rendered at high resolution so it stays crisp both inline and enlarged.
@@ -324,7 +345,7 @@ export default function Wallet({ address }: Props) {
           )}
 
           <div className="flex justify-end">
-            <span className="text-xs text-zinc-600">{CHAIN_NAME}</span>
+            <span className="text-xs text-zinc-600">{net.name}</span>
           </div>
 
           {/* Address */}
@@ -369,7 +390,7 @@ export default function Wallet({ address }: Props) {
             {balance !== null ? (
               <p className="text-3xl font-bold tabular-nums">
                 <span className="text-peer">{balance}</span>
-                <span className="text-lg text-zinc-500 ml-2">{CURRENCY_SYMBOL}</span>
+                <span className="text-lg text-zinc-500 ml-2">{net.currencySymbol}</span>
               </p>
             ) : (
               <div className="h-9 bg-zinc-800 rounded-lg animate-pulse w-44" />
@@ -420,7 +441,7 @@ export default function Wallet({ address }: Props) {
       {view === "send" && (
         <main className="flex-1 px-6 py-8 w-full max-w-md mx-auto space-y-6">
           <div>
-            <h2 className="text-xl font-semibold">Send {CURRENCY_SYMBOL}</h2>
+            <h2 className="text-xl font-semibold">Send {net.currencySymbol}</h2>
             <p className="text-zinc-400 text-sm mt-1">
               Transfers use a fixed gas limit of 21,000. Enter your keystore
               password to sign.
@@ -442,7 +463,7 @@ export default function Wallet({ address }: Props) {
             </div>
 
             <div>
-              <label className={LABEL}>Amount ({CURRENCY_SYMBOL})</label>
+              <label className={LABEL}>Amount ({net.currencySymbol})</label>
               <input
                 type="text"
                 value={amount}
@@ -481,7 +502,7 @@ export default function Wallet({ address }: Props) {
             )}
 
             <button type="submit" disabled={sending} className={BTN_PRIMARY}>
-              {sending ? "Signing & Broadcasting…" : `Send ${CURRENCY_SYMBOL}`}
+              {sending ? "Signing & Broadcasting…" : `Send ${net.currencySymbol}`}
             </button>
           </form>
         </main>
@@ -560,18 +581,46 @@ export default function Wallet({ address }: Props) {
         <main className="flex-1 px-6 py-8 w-full max-w-md mx-auto space-y-6">
           <h2 className="text-xl font-semibold">Settings</h2>
 
+          {networks.length > 1 && (
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-zinc-500 uppercase tracking-wider">Network</p>
+              <div className="flex gap-2">
+                {networks.map((n) => {
+                  const active = n.key === net.key;
+                  return (
+                    <button
+                      key={n.key}
+                      onClick={() => handleSwitchNetwork(n.key)}
+                      disabled={switching || active}
+                      className={`flex-1 py-2.5 rounded-lg text-sm font-medium border transition-colors cursor-pointer disabled:cursor-default ${
+                        active
+                          ? "border-peer text-peer bg-peer/10"
+                          : "border-zinc-700 text-zinc-300 hover:border-zinc-500 disabled:opacity-50"
+                      }`}
+                    >
+                      {n.name}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-xs text-zinc-600">
+                Switching stops the miner and reconnects to the selected chain.
+              </p>
+            </div>
+          )}
+
           <div className="bg-zinc-900 border border-zinc-800 rounded-xl divide-y divide-zinc-800">
             <div className="px-5 py-3 flex justify-between items-center">
               <span className="text-sm text-zinc-400">Network</span>
-              <span className="text-sm text-zinc-200">{CHAIN_NAME}</span>
+              <span className="text-sm text-zinc-200">{net.name}</span>
             </div>
             <div className="px-5 py-3 flex justify-between items-center">
               <span className="text-sm text-zinc-400">Chain ID</span>
-              <span className="text-sm font-mono text-zinc-200">{CHAIN_ID}</span>
+              <span className="text-sm font-mono text-zinc-200">{net.chainId}</span>
             </div>
             <div className="px-5 py-3 flex justify-between items-center">
               <span className="text-sm text-zinc-400">Currency</span>
-              <span className="text-sm text-zinc-200">{CURRENCY_SYMBOL}</span>
+              <span className="text-sm text-zinc-200">{net.currencySymbol}</span>
             </div>
           </div>
 
@@ -723,7 +772,7 @@ export default function Wallet({ address }: Props) {
             onClick={(e) => e.stopPropagation()}
             className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 w-full max-w-sm flex flex-col items-center gap-4 cursor-default"
           >
-            <p className={LABEL}>Scan to send {CURRENCY_SYMBOL} to this address</p>
+            <p className={LABEL}>Scan to send {net.currencySymbol} to this address</p>
             <div className="rounded-xl bg-white p-4">
               <img src={qrDataUrl} alt="Receive address QR code" className="w-64 h-64 block" />
             </div>

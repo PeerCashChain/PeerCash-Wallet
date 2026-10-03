@@ -14,11 +14,10 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
 const CTRL_BREAK_EVENT: u32 = 1;
 
-const CHAIN_ID: u64 = 563321;
 const GAS_LIMIT_TRANSFER: u64 = 21_000;
 
-// Hardcoded RPC URLs — never accepted from the frontend to prevent SSRF.
-const RPC_URL: &str = "https://testrpc.peercash.io";
+// Hardcoded local miner-node RPC — never accepted from the frontend to prevent
+// SSRF. Network-independent: the local node always listens here regardless of chain.
 const MINER_RPC_URL: &str = "http://127.0.0.1:8546";
 
 // 10,000 gwei safety cap on gas price; protects against a compromised RPC endpoint.
@@ -31,11 +30,171 @@ const MAX_LOG_BYTES: u64 = 65_536;
 const MAX_FAILED_ATTEMPTS: u32 = 5;
 
 // ── Miner constants ───────────────────────────────────────────────────────────
-const MINER_NETWORK_ID: &str = "563321";
 const MINER_HTTP_PORT: &str = "8546";
 const MINER_P2P_PORT: &str = "30304";
-const MINER_BOOTNODE: &str =
-    "enode://39c0e17ff5f0020a70f4f4a9a69c09d9f962e659d9840abb44bfafd335ae934d94b7b2832840da192eae4637ed62fa9e84ac08cd915ece86907241d5bf8cc769@167.71.186.249:30303";
+
+// ── Network registry ──────────────────────────────────────────────────────────
+// Single source of truth for every network. To add a network: append one entry
+// here and bundle its genesis under src-tauri/resources/ (+ tauri.conf.json). The
+// selected network drives tx signing (chain_id), the public RPC (rpc_url), and the
+// miner subprocess (network_id, bootnodes, genesis). The public RPC URL stays
+// backend-only (never caller-supplied) to prevent SSRF.
+struct Network {
+    key: &'static str,              // stable id used in storage + UI
+    name: &'static str,             // human-facing display name
+    chain_id: u64,                  // EIP-155 signing
+    rpc_url: &'static str,          // public JSON-RPC endpoint
+    currency_symbol: &'static str,
+    decimals: u8,
+    network_id: &'static str,       // geth --networkid
+    bootnodes: &'static [&'static str],
+    genesis_resource: &'static str, // bundled resource filename
+    genesis_env: &'static str,      // debug-only env var that overrides the genesis path
+}
+
+const NETWORKS: &[Network] = &[
+    Network {
+        key: "mainnet",
+        name: "PeerCash",
+        chain_id: 620156,
+        rpc_url: "https://rpc.peercash.io",
+        currency_symbol: "PEER",
+        decimals: 18,
+        network_id: "620156",
+        bootnodes: &[
+            "enode://cc2782823bee8c12c127c0cdd1215ce00e6f0ed5d201900392a3c8942b1d368bdf42891289ecde9d87330caef83dda8b69c80d3e2da03ccb1a462e57ec730104@134.122.29.72:30303",
+            "enode://751d49ecf147088282bb0fa0b02f7d1fd683cdacfe08621deb2a8ada09bd1157496180d0a102751cd0384c3fadeba126325dbc6ac9577dbdc7f193cd49ab034d@167.71.85.230:30303",
+        ],
+        genesis_resource: "mainnet.json",
+        genesis_env: "PEERCASH_GENESIS_MAINNET",
+    },
+    // NOTE: testnet (chainId 563321) is temporarily omitted. It runs the legacy
+    // keccak-stub consensus, which the real-RandomX binary we now ship cannot
+    // validate. Re-add this entry once testnet is redeployed on real RandomX:
+    //   Network { key: "testnet", name: "PeerCash Testnet", chain_id: 563321,
+    //             rpc_url: "https://testrpc.peercash.io", currency_symbol: "PEER",
+    //             decimals: 18, network_id: "563321",
+    //             bootnodes: &["enode://39c0…@167.71.186.249:30303"],
+    //             genesis_resource: "testnet.json", genesis_env: "PEERCASH_GENESIS" }
+];
+
+// New installs (and upgrades with no saved choice) start here.
+const DEFAULT_NETWORK_KEY: &str = "mainnet";
+
+fn network_by_key(key: &str) -> Option<&'static Network> {
+    NETWORKS.iter().find(|n| n.key == key)
+}
+
+fn default_network() -> &'static Network {
+    network_by_key(DEFAULT_NETWORK_KEY).expect("DEFAULT_NETWORK_KEY must exist in NETWORKS")
+}
+
+// ── Selected-network state + persistence ──────────────────────────────────────
+
+struct NetworkState(Mutex<&'static Network>);
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct PersistedNetwork {
+    network: String,
+}
+
+fn app_data_base() -> Option<std::path::PathBuf> {
+    std::env::var("APPDATA")
+        .ok()
+        .map(|d| std::path::PathBuf::from(d).join("com.peercash.wallet"))
+}
+
+fn network_state_path() -> Option<std::path::PathBuf> {
+    app_data_base().map(|d| d.join("network.json"))
+}
+
+/// Resolve the network to launch with. Honors a saved choice; otherwise defaults
+/// to mainnet. The first time there's no saved choice (a fresh upgrade) we also
+/// perform the one-time move of the legacy flat `miner-node/` datadir into
+/// `miner-node/testnet/`, so a user who later selects testnet keeps the chain
+/// they already synced.
+fn load_selected_network() -> &'static Network {
+    match network_state_path().and_then(|p| std::fs::read_to_string(p).ok()) {
+        Some(data) => serde_json::from_str::<PersistedNetwork>(&data)
+            .ok()
+            .and_then(|saved| network_by_key(&saved.network))
+            .unwrap_or_else(default_network),
+        None => {
+            migrate_legacy_testnet_datadir();
+            default_network()
+        }
+    }
+}
+
+fn save_selected_network(net: &Network) {
+    let Some(path) = network_state_path() else { return };
+    if let Ok(json) = serde_json::to_string(&PersistedNetwork { network: net.key.to_string() }) {
+        let _ = std::fs::create_dir_all(path.parent().unwrap_or(&path));
+        let _ = std::fs::write(&path, json);
+    }
+}
+
+/// One-time migration: relocate the pre-multinetwork flat datadir
+/// (`miner-node/geth`, `miner-node/sync_cache.json`, `miner-node/miner.log`, …)
+/// into `miner-node/testnet/`. No-op once a per-network subdir exists or there is
+/// nothing synced to move.
+fn migrate_legacy_testnet_datadir() {
+    let Some(base) = app_data_base() else { return };
+    let miner_root = base.join("miner-node");
+    // `geth/` is created by `geth init`; its absence means nothing to migrate.
+    if !miner_root.join("geth").exists() {
+        return;
+    }
+    let testnet_dir = miner_root.join("testnet");
+    if testnet_dir.exists() {
+        return; // already migrated
+    }
+    if std::fs::create_dir_all(&testnet_dir).is_err() {
+        return;
+    }
+    // Collect paths first, then move — don't rename while iterating the dir handle.
+    let Ok(entries) = std::fs::read_dir(&miner_root) else { return };
+    let to_move: Vec<std::path::PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            // Leave the per-network dirs themselves (testnet/, a future mainnet/, …).
+            !NETWORKS.iter().any(|n| n.key == name)
+        })
+        .collect();
+    for from in to_move {
+        if let Some(name) = from.file_name() {
+            let _ = std::fs::rename(&from, testnet_dir.join(name));
+        }
+    }
+}
+
+// ── Network info (serialized to the renderer) ──────────────────────────────────
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NetworkInfo {
+    key: String,
+    name: String,
+    chain_id: u64,
+    rpc_url: String,
+    currency_symbol: String,
+    decimals: u8,
+}
+
+impl From<&Network> for NetworkInfo {
+    fn from(n: &Network) -> Self {
+        NetworkInfo {
+            key: n.key.to_string(),
+            name: n.name.to_string(),
+            chain_id: n.chain_id,
+            rpc_url: n.rpc_url.to_string(),
+            currency_symbol: n.currency_symbol.to_string(),
+            decimals: n.decimals,
+        }
+    }
+}
 
 // ── Auth brute-force protection ───────────────────────────────────────────────
 
@@ -222,11 +381,11 @@ struct SyncCache {
     highest: u64,
 }
 
-fn sync_cache_path(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+fn sync_cache_path(app: &tauri::AppHandle, net: &Network) -> Option<std::path::PathBuf> {
     app.path()
         .app_data_dir()
         .ok()
-        .map(|d| d.join("miner-node").join("sync_cache.json"))
+        .map(|d| d.join("miner-node").join(net.key).join("sync_cache.json"))
 }
 
 fn kill_miner_guard(guard: &mut std::sync::MutexGuard<Option<MinerChild>>) {
@@ -393,6 +552,7 @@ fn parse_hex_u128(s: &str) -> Result<u128, String> {
 
 fn sign_legacy_tx(
     pk: &[u8],
+    chain_id: u64,
     nonce: u64,
     gas_price: u128,
     to: &[u8; 20],
@@ -408,7 +568,7 @@ fn sign_legacy_tx(
         rlp_address(to),
         rlp_u128(value_wei),
         vec![0x80], // empty data
-        rlp_u64(CHAIN_ID),
+        rlp_u64(chain_id),
         vec![0x80],
         vec![0x80],
     ]);
@@ -418,7 +578,7 @@ fn sign_legacy_tx(
         .sign_prehash(hash.as_slice())
         .map_err(|e| e.to_string())?;
 
-    let v = recid.to_byte() as u64 + 35 + 2 * CHAIN_ID;
+    let v = recid.to_byte() as u64 + 35 + 2 * chain_id;
     let r_bytes = sig.r().to_bytes();
     let s_bytes = sig.s().to_bytes();
 
@@ -470,13 +630,20 @@ fn patch_and_save(app_dir: &std::path::Path, pk: &[u8], password: &str) -> Resul
 
 // ── Tauri commands ────────────────────────────────────────────────────────────
 
-/// JSON-RPC call to the public PeerCash testnet RPC. URL is hardcoded — never caller-supplied.
+/// JSON-RPC call to the selected network's public RPC. The URL comes from the
+/// backend network registry — never caller-supplied — to prevent SSRF.
 #[tauri::command]
-async fn rpc_call(method: String, params: Value) -> Result<Value, String> {
+async fn rpc_call(
+    network_state: tauri::State<'_, NetworkState>,
+    method: String,
+    params: Value,
+) -> Result<Value, String> {
+    // Copy out the &'static str and drop the guard before awaiting.
+    let rpc_url = network_state.0.lock().map_err(|e| e.to_string())?.rpc_url;
     let client = reqwest::Client::new();
     let body = json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params });
     let resp = client
-        .post(RPC_URL)
+        .post(rpc_url)
         .json(&body)
         .send()
         .await
@@ -641,11 +808,15 @@ async fn get_account(app: tauri::AppHandle) -> Result<Option<String>, String> {
 async fn send_transaction(
     app: tauri::AppHandle,
     auth_state: tauri::State<'_, AuthState>,
+    network_state: tauri::State<'_, NetworkState>,
     to: String,
     amount_peer: String,
     password: String,
 ) -> Result<String, String> {
     check_auth_lock(&auth_state.0)?;
+
+    // &'static Network is Copy + Send; safe to hold across awaits (the guard is not).
+    let net = *network_state.0.lock().map_err(|e| e.to_string())?;
 
     let keystore_path = app
         .path()
@@ -682,10 +853,10 @@ async fn send_transaction(
     let to_bytes: [u8; 20] = to_vec.try_into().map_err(|_| "Address length error".to_string())?;
 
     let nonce_val =
-        rpc_request(RPC_URL, "eth_getTransactionCount", json!([from_addr, "pending"])).await?;
+        rpc_request(net.rpc_url, "eth_getTransactionCount", json!([from_addr, "pending"])).await?;
     let nonce = parse_hex_u64(nonce_val.as_str().ok_or("Bad nonce response")?)?;
 
-    let gp_val = rpc_request(RPC_URL, "eth_gasPrice", json!([])).await?;
+    let gp_val = rpc_request(net.rpc_url, "eth_gasPrice", json!([])).await?;
     let gas_price = parse_hex_u128(gp_val.as_str().ok_or("Bad gas price response")?)?;
 
     // Reject absurdly high gas prices from a potentially compromised RPC.
@@ -696,9 +867,9 @@ async fn send_transaction(
         ));
     }
 
-    let raw_tx = sign_legacy_tx(&pk, nonce, gas_price, &to_bytes, value_wei)?;
+    let raw_tx = sign_legacy_tx(&pk, net.chain_id, nonce, gas_price, &to_bytes, value_wei)?;
 
-    let hash_val = rpc_request(RPC_URL, "eth_sendRawTransaction", json!([raw_tx])).await?;
+    let hash_val = rpc_request(net.rpc_url, "eth_sendRawTransaction", json!([raw_tx])).await?;
     let tx_hash = hash_val.as_str().ok_or("No tx hash in response")?;
     Ok(tx_hash.to_string())
 }
@@ -710,9 +881,12 @@ async fn send_transaction(
 async fn start_miner(
     app: tauri::AppHandle,
     miner_state: tauri::State<'_, MinerProcess>,
+    network_state: tauri::State<'_, NetworkState>,
     address: String,
     _threads: u32,
 ) -> Result<(), String> {
+    let net = *network_state.0.lock().map_err(|e| e.to_string())?;
+
     // Validate address before it reaches the subprocess command line.
     let addr_hex = address.trim_start_matches("0x");
     if addr_hex.len() != 40 || !addr_hex.chars().all(|c| c.is_ascii_hexdigit()) {
@@ -744,18 +918,26 @@ async fn start_miner(
     };
 
     let genesis_path = if cfg!(debug_assertions) {
-        std::env::var("PEERCASH_GENESIS")
+        // Override per network via its env var; otherwise fall back to the bundled
+        // resource shipped in-tree (portable, no machine-specific path).
+        std::env::var(net.genesis_env)
             .map(std::path::PathBuf::from)
-            .unwrap_or_else(|_| std::path::PathBuf::from(r"C:\Users\b_str\peercash-chain\genesis\testnet.json"))
+            .unwrap_or_else(|_| {
+                std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("resources")
+                    .join(net.genesis_resource)
+            })
     } else {
         // resources are placed in the resource_dir by Tauri's bundler.
         app.path().resource_dir()
             .map_err(|e| e.to_string())?
-            .join("testnet.json")
+            .join(net.genesis_resource)
     };
 
+    // Per-network datadir so chains never collide (a shared datadir would fail a
+    // genesis-mismatch on switch). Legacy testnet data was moved into testnet/ on upgrade.
     let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let datadir = app_dir.join("miner-node");
+    let datadir = app_dir.join("miner-node").join(net.key);
     std::fs::create_dir_all(&datadir).map_err(|e| e.to_string())?;
 
     // Init genesis on first run (check for geth/chaindata which init creates)
@@ -790,12 +972,14 @@ async fn start_miner(
         .map_err(|e| format!("Cannot open miner log: {e}"))?;
 
     let datadir_str = datadir.to_string_lossy().to_string();
+    // geth accepts a comma-separated bootnode list; mainnet ships two.
+    let bootnodes = net.bootnodes.join(",");
     let child = Command::new(&binary_path)
         .args([
             "--datadir",         &datadir_str,
-            "--networkid",       MINER_NETWORK_ID,
+            "--networkid",       net.network_id,
             "--port",            MINER_P2P_PORT,
-            "--bootnodes",       MINER_BOOTNODE,
+            "--bootnodes",       &bootnodes,
             "--syncmode",        "snap",
             "--mine",
             "--miner.etherbase", &address,
@@ -867,14 +1051,20 @@ async fn stop_miner(miner_state: tauri::State<'_, MinerProcess>) -> Result<(), S
 
 /// Read the last `bytes` of the miner's stderr log for hashrate parsing on the JS side.
 #[tauri::command]
-async fn get_miner_log_tail(app: tauri::AppHandle, bytes: u64) -> Result<String, String> {
+async fn get_miner_log_tail(
+    app: tauri::AppHandle,
+    network_state: tauri::State<'_, NetworkState>,
+    bytes: u64,
+) -> Result<String, String> {
     use std::io::{Read, Seek, SeekFrom};
+    let net = *network_state.0.lock().map_err(|e| e.to_string())?;
     let bytes = bytes.min(MAX_LOG_BYTES);
     let log_path = app
         .path()
         .app_data_dir()
         .map_err(|e| e.to_string())?
         .join("miner-node")
+        .join(net.key)
         .join("miner.log");
 
     let mut file = std::fs::File::open(&log_path).map_err(|e| e.to_string())?;
@@ -903,8 +1093,12 @@ async fn get_miner_pid(miner_state: tauri::State<'_, MinerProcess>) -> Result<Op
 }
 
 #[tauri::command]
-async fn get_sync_cache(app: tauri::AppHandle) -> Result<Option<SyncCache>, String> {
-    let Some(path) = sync_cache_path(&app) else { return Ok(None) };
+async fn get_sync_cache(
+    app: tauri::AppHandle,
+    network_state: tauri::State<'_, NetworkState>,
+) -> Result<Option<SyncCache>, String> {
+    let net = *network_state.0.lock().map_err(|e| e.to_string())?;
+    let Some(path) = sync_cache_path(&app, net) else { return Ok(None) };
     match std::fs::read_to_string(&path) {
         Ok(s) => serde_json::from_str(&s).map(Some).map_err(|e| e.to_string()),
         Err(_) => Ok(None),
@@ -912,12 +1106,51 @@ async fn get_sync_cache(app: tauri::AppHandle) -> Result<Option<SyncCache>, Stri
 }
 
 #[tauri::command]
-async fn save_sync_cache(app: tauri::AppHandle, current: u64, highest: u64) -> Result<(), String> {
-    let Some(path) = sync_cache_path(&app) else { return Ok(()) };
+async fn save_sync_cache(
+    app: tauri::AppHandle,
+    network_state: tauri::State<'_, NetworkState>,
+    current: u64,
+    highest: u64,
+) -> Result<(), String> {
+    let net = *network_state.0.lock().map_err(|e| e.to_string())?;
+    let Some(path) = sync_cache_path(&app, net) else { return Ok(()) };
     let dir = path.parent().unwrap_or(&path);
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let json = serde_json::to_string(&SyncCache { current, highest }).map_err(|e| e.to_string())?;
     std::fs::write(&path, json).map_err(|e| e.to_string())
+}
+
+// ── Network commands ──────────────────────────────────────────────────────────
+
+/// The currently selected network (for display + to seed the selector).
+#[tauri::command]
+fn get_network(network_state: tauri::State<'_, NetworkState>) -> Result<NetworkInfo, String> {
+    let net = *network_state.0.lock().map_err(|e| e.to_string())?;
+    Ok(net.into())
+}
+
+/// Every network the wallet can switch to, in registry order.
+#[tauri::command]
+fn list_networks() -> Vec<NetworkInfo> {
+    NETWORKS.iter().map(NetworkInfo::from).collect()
+}
+
+/// Persist the chosen network and swap it in. The miner is stopped first — it is
+/// bound to one chain's datadir/bootnodes and must not outlive the switch.
+#[tauri::command]
+fn set_network(
+    network_state: tauri::State<'_, NetworkState>,
+    miner_state: tauri::State<'_, MinerProcess>,
+    key: String,
+) -> Result<NetworkInfo, String> {
+    let net = network_by_key(&key).ok_or_else(|| format!("Unknown network: {key}"))?;
+    {
+        let mut guard = miner_state.0.lock().map_err(|e| e.to_string())?;
+        kill_miner_guard(&mut guard);
+    }
+    save_selected_network(net);
+    *network_state.0.lock().map_err(|e| e.to_string())? = net;
+    Ok(net.into())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -928,6 +1161,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .manage(MinerProcess(Mutex::new(None)))
         .manage(AuthState(Mutex::new(load_auth_state())))
+        .manage(NetworkState(Mutex::new(load_selected_network())))
         .invoke_handler(tauri::generate_handler![
             rpc_call,
             miner_rpc_call,
@@ -944,6 +1178,9 @@ pub fn run() {
             get_miner_log_tail,
             get_sync_cache,
             save_sync_cache,
+            get_network,
+            list_networks,
+            set_network,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
