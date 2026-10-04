@@ -1,11 +1,11 @@
 {
-  "version": "0.2.1",
-  "notes": "Fixes a missing libstdc++ DLL that prevented the miner from starting on clean machines (the bundled node is now self-contained). Mainnet (chainId 620156) with real RandomX proof-of-work; new installs default to mainnet.",
-  "pub_date": "2026-10-04T01:40:14Z",
+  "version": "0.2.2",
+  "notes": "The miner's CPU/threads selector now actually limits cores (previously it was ignored and the miner always used all cores), and your thread selection persists across tab switches and restarts. Mainnet (chainId 620156) with real RandomX proof-of-work.",
+  "pub_date": "2026-10-04T16:34:46Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRZHZlVEtoZzA5ZExTZThhdmVSMUpmQTFsZ1hJaVpRZ0xjQnNsd1EzUEhOU0FkZFdGR0NnWU56N3BrcTNkUDRuWGc3akN6UWZyTFp4ZEYrTnRPZE1iWGhnRytaMXhDRkFVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMDc4MDE0CWZpbGU6UGVlckNhc2ggV2FsbGV0XzAuMi4xX3g2NC1zZXR1cC5leGUKMmtia0oxMFNuMWpzRXUxV2l1OEkvZFRXMWRRLzRBc3dxRGlWeWt4YmlpZC9WQWNqbkNPcDUzd01PejdHRmd5WEpYMTRkZHlLTXhPdHVsRE9COGw0QWc9PQo=",
-      "url": "https://github.com/PeerCashChain/PeerCash-Wallet/releases/download/v0.2.1/PeerCash-Wallet_0.2.1_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRZHZlVEtoZzA5ZExvRzhtZjVZOTIrMGtVQVdoQittMW14YzNVQnp0T0NxV3lqU0FGTVNTTzB4cFUrMVhtSlNsNVpTbDVDdFhJUmFMZjA1NVN0cmNIWUxBL01XZG0xNUFzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMTMxNjg2CWZpbGU6UGVlckNhc2ggV2FsbGV0XzAuMi4yX3g2NC1zZXR1cC5leGUKSHd3Vi8yMVRlMktjRFhHcE5jdlREYjlhQ21KZmIrK0ZLdmNDZmJHM3VNK0hxWmJidThKZnpBR2RjbHJMTEQrUTRxNmpEcXZUZWgyRjJ0ZzZhcHhqQmc9PQo=",
+      "url": "https://github.com/PeerCashChain/PeerCash-Wallet/releases/download/v0.2.2/PeerCash-Wallet_0.2.2_x64-setup.exe"
     }
   }
 }

@@ -883,9 +883,11 @@ async fn start_miner(
     miner_state: tauri::State<'_, MinerProcess>,
     network_state: tauri::State<'_, NetworkState>,
     address: String,
-    _threads: u32,
+    threads: u32,
 ) -> Result<(), String> {
     let net = *network_state.0.lock().map_err(|e| e.to_string())?;
+    // Clamp to a sane floor: GETH_RANDOMX_THREADS unset/0 makes the sealer use ALL cores.
+    let threads = threads.clamp(1, 64);
 
     // Validate address before it reaches the subprocess command line.
     let addr_hex = address.trim_start_matches("0x");
@@ -990,6 +992,8 @@ async fn start_miner(
             "--http.corsdomain", "",
             "--http.api",        "eth,net,web3",
         ])
+        // This fork reads the mining thread count from this env var; unset → all cores.
+        .env("GETH_RANDOMX_THREADS", threads.to_string())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::from(log_file))

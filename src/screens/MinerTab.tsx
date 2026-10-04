@@ -93,7 +93,12 @@ function SyncProgress({
 export default function MinerTab({ address, net }: Props) {
   const [running, setRunning] = useState(false);
   const [poll, setPoll] = useState<MinerPollResult>({ status: "stopped" });
-  const [threads, setThreads] = useState(2);
+  // Persisted so the selection survives tab switches (this component unmounts when
+  // the wallet tab is shown) and app restarts, and reflects the running miner.
+  const [threads, setThreads] = useState<number>(() => {
+    const saved = parseInt(localStorage.getItem("peercash.minerThreads") ?? "", 10);
+    return Number.isFinite(saved) && saved >= 1 && saved <= 16 ? saved : 2;
+  });
   const [error, setError] = useState("");
   const [toggling, setToggling] = useState(false);
   const [startedAt, setStartedAt] = useState<number | null>(null);
@@ -105,6 +110,9 @@ export default function MinerTab({ address, net }: Props) {
   const prevSyncRef = useRef<{ block: number; ts: number } | null>(null);
 
   useEffect(() => { runningRef.current = running; }, [running]);
+
+  // Persist the thread selection across remounts/restarts.
+  useEffect(() => { localStorage.setItem("peercash.minerThreads", String(threads)); }, [threads]);
 
   // Calculate sync rate whenever currentBlock advances
   useEffect(() => {
