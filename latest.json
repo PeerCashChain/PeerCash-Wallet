@@ -1,11 +1,11 @@
 {
-  "version": "0.2.2",
-  "notes": "The miner's CPU/threads selector now actually limits cores (previously it was ignored and the miner always used all cores), and your thread selection persists across tab switches and restarts. Mainnet (chainId 620156) with real RandomX proof-of-work.",
-  "pub_date": "2026-10-04T16:34:46Z",
+  "version": "0.2.3",
+  "notes": "Miner now auto-selects RandomX fast (full-dataset) mode when enough RAM is free, and shows the active mode plus a live hashrate in the Miner tab. Fixes a crash when mining with multiple threads, and the miner status no longer resets when switching tabs.",
+  "pub_date": "2026-10-08T21:14:20Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRZHZlVEtoZzA5ZExvRzhtZjVZOTIrMGtVQVdoQittMW14YzNVQnp0T0NxV3lqU0FGTVNTTzB4cFUrMVhtSlNsNVpTbDVDdFhJUmFMZjA1NVN0cmNIWUxBL01XZG0xNUFzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMTMxNjg2CWZpbGU6UGVlckNhc2ggV2FsbGV0XzAuMi4yX3g2NC1zZXR1cC5leGUKSHd3Vi8yMVRlMktjRFhHcE5jdlREYjlhQ21KZmIrK0ZLdmNDZmJHM3VNK0hxWmJidThKZnpBR2RjbHJMTEQrUTRxNmpEcXZUZWgyRjJ0ZzZhcHhqQmc9PQo=",
-      "url": "https://github.com/PeerCashChain/PeerCash-Wallet/releases/download/v0.2.2/PeerCash-Wallet_0.2.2_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRZHZlVEtoZzA5ZEsvajNocVlFaDRwb05Ydll3L0tkbnNMdWtKeXNTZGxvdjdpTFdEUmRpUEZQMVhnb0U2YnJ5eDVzNmJGa1ZaS1Q1OE5GQ1IzUjk2SjI0OTZFdEVzOWcwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxNDkzODM0CWZpbGU6UGVlckNhc2gtV2FsbGV0XzAuMi4zX3g2NC1zZXR1cC5leGUKZVhYU0xTTUNlQkNKYjJlSXpEOGhRMUkvempLUmlOam9oWWdkY2xGdnRTVkQvdUtyS2pzVDhTZEpuUUZQck1GWVFrT1RxQ0ZScUV1QS9WNEhXRHdUQVE9PQo=",
+      "url": "https://github.com/PeerCashChain/PeerCash-Wallet/releases/download/v0.2.3/PeerCash-Wallet_0.2.3_x64-setup.exe"
     }
   }
 }
