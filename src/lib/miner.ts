@@ -2,7 +2,13 @@ import { invoke } from "@tauri-apps/api/core";
 
 // ── Tauri command wrappers ────────────────────────────────────────────────────
 
-export function startMiner(address: string, threads: number): Promise<void> {
+/** Which RandomX mode the sealer started in, decided from free RAM at spawn time. */
+export interface MinerMode {
+  fullMem: boolean;   // true → fast/full-dataset mode (~2.3 GB RAM)
+  freeMemMb: number;  // free physical RAM observed when the miner was started
+}
+
+export function startMiner(address: string, threads: number): Promise<MinerMode> {
   return invoke("start_miner", { address, threads });
 }
 
@@ -13,6 +19,11 @@ export function stopMiner(): Promise<void> {
 /** Returns the OS PID if the miner process is running, null if stopped/crashed. */
 export function getMinerPid(): Promise<number | null> {
   return invoke("get_miner_pid");
+}
+
+/** The running miner's RandomX mode, or null if it isn't running. */
+export function getMinerMode(): Promise<MinerMode | null> {
+  return invoke<MinerMode | null>("get_miner_mode").catch(() => null);
 }
 
 // ── Local RPC helpers ─────────────────────────────────────────────────────────
@@ -64,7 +75,26 @@ function saveSyncCache(current: number, highest: number): void {
 
 /** Read last 8 KB of the miner's stderr log. */
 async function getMinerLogTail(): Promise<string> {
-  return invoke<string>("get_miner_log_tail", { bytes: 8192 }).catch(() => "");
+  // 32 KB: large enough that the ~5s "RandomX mining hashrate=" line survives the
+  // block-import log spam between reads (the UI polls every 3s).
+  return invoke<string>("get_miner_log_tail", { bytes: 32768 }).catch(() => "");
+}
+
+/**
+ * Parse the live hashrate the miner logs every few seconds while mining:
+ *   INFO [MM-DD|HH:MM:SS.mmm] RandomX mining   hashrate=1,234 threads=2
+ * Returns the most recent value in H/s, or 0 if no such line is present — e.g. an
+ * older binary, or no hashing happened in the window (dataset still building, or
+ * node only syncing). Callers fall back to the sealed-block estimate.
+ */
+export function parseLiveHashrate(log: string): number {
+  const re = /RandomX mining\s+hashrate=([\d,]+)/g;
+  let m: RegExpExecArray | null;
+  let last = 0;
+  while ((m = re.exec(log)) !== null) {
+    last = parseInt(m[1].replace(/,/g, ""), 10);
+  }
+  return Number.isFinite(last) ? last : 0;
 }
 
 /**
@@ -128,7 +158,9 @@ export async function pollMinerStatus(isRunning: boolean): Promise<MinerPollResu
     getMinerLogTail(),
   ]);
 
-  const hashrate = parseHashrateFromLog(logTail);
+  // Prefer the miner's own logged hashrate; fall back to the sealed-block
+  // estimate for binaries that don't emit it (and when no hashing is happening).
+  const hashrate = parseLiveHashrate(logTail) || parseHashrateFromLog(logTail);
   const peerCount = parseInt(peerHex as string, 16);
 
   if (syncResult !== false && syncResult !== null && typeof syncResult === "object") {

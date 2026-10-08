@@ -4,9 +4,11 @@ import {
   stopMiner,
   pollMinerStatus,
   getSyncCache,
+  getMinerMode,
   formatHashrate,
   type MinerStatus,
   type MinerPollResult,
+  type MinerMode,
 } from "../lib/miner";
 import type { NetworkInfo } from "../config";
 
@@ -105,6 +107,9 @@ export default function MinerTab({ address, net }: Props) {
   const [elapsed, setElapsed] = useState(0);
   const [syncRate, setSyncRate] = useState(0); // blocks/sec
   const [syncCache, setSyncCache] = useState<{ current: number; highest: number } | null>(null);
+  const [mode, setMode] = useState<MinerMode | null>(null);
+  // When the node first reached the mining phase — RandomX dataset build starts here.
+  const [miningStartedAt, setMiningStartedAt] = useState<number | null>(null);
 
   const runningRef = useRef(running);
   const prevSyncRef = useRef<{ block: number; ts: number } | null>(null);
@@ -133,6 +138,16 @@ export default function MinerTab({ address, net }: Props) {
     prevSyncRef.current = { block: poll.syncInfo.current, ts: now };
   }, [poll]);
 
+  // Stamp when mining begins (sync done → sealer starts), so we can show the
+  // RandomX dataset-build window. Clear it whenever we leave the mining phase.
+  useEffect(() => {
+    if (poll.status === "mining") {
+      setMiningStartedAt((prev) => prev ?? Date.now());
+    } else {
+      setMiningStartedAt(null);
+    }
+  }, [poll.status]);
+
   // Elapsed-seconds ticker — shown while connecting/starting so the user knows it's alive
   useEffect(() => {
     if (!running || !startedAt) { setElapsed(0); return; }
@@ -148,6 +163,8 @@ export default function MinerTab({ address, net }: Props) {
       if (result.status !== "crashed") {
         setRunning(true);
         setPoll(result);
+        getMinerMode().then((m) => { if (m) setMode(m); });
+        if (result.status === "mining") setMiningStartedAt(Date.now());
       }
     }).catch(() => {/* not running */});
   }, []);
@@ -179,7 +196,8 @@ export default function MinerTab({ address, net }: Props) {
     setError("");
     setToggling(true);
     try {
-      await startMiner(address, threads);
+      const m = await startMiner(address, threads);
+      setMode(m);
       setRunning(true);
       setStartedAt(Date.now());
       setPoll({ status: "starting" });
@@ -201,12 +219,22 @@ export default function MinerTab({ address, net }: Props) {
       setRunning(false);
       setStartedAt(null);
       setPoll({ status: "stopped" });
+      setMode(null);
+      setMiningStartedAt(null);
       setToggling(false);
     }
   }
 
   const isStopped = poll.status === "stopped" || poll.status === "crashed";
-  const isMining  = poll.status === "mining";
+  // In fast mode the sealer builds a ~2.3 GiB dataset (~30–90s) before any hashing;
+  // hashrate reads 0 until it's ready. Show a distinct "preparing" state for ~90s.
+  const preparing =
+    poll.status === "mining" &&
+    (mode?.fullMem ?? false) &&
+    (poll.hashrate ?? 0) === 0 &&
+    miningStartedAt !== null &&
+    Date.now() - miningStartedAt < 90_000;
+  const isMining  = poll.status === "mining" && !preparing;
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white flex flex-col select-none">
@@ -231,15 +259,41 @@ export default function MinerTab({ address, net }: Props) {
         }`}>
           {/* Header row */}
           <div className="flex items-center gap-3">
-            <StatusDot status={poll.status} />
+            {preparing
+              ? <div className="w-3 h-3 rounded-full bg-amber-400 animate-pulse" />
+              : <StatusDot status={poll.status} />}
             <span className={`text-lg font-semibold ${
-              isMining ? "text-peer" : poll.status === "crashed" ? "text-red-400" : "text-white"
+              preparing ? "text-amber-400"
+                : isMining ? "text-peer"
+                : poll.status === "crashed" ? "text-red-400"
+                : "text-white"
             }`}>
-              {statusLabel(poll.status)}
+              {preparing ? "Preparing mining dataset…" : statusLabel(poll.status)}
             </span>
           </div>
 
-          <p className="text-sm text-zinc-500">{statusSubtext(poll, elapsed, net.currencySymbol)}</p>
+          <p className="text-sm text-zinc-500">
+            {preparing
+              ? "Building the RandomX dataset (~30–90s). Hashing begins once it's ready."
+              : statusSubtext(poll, elapsed, net.currencySymbol)}
+          </p>
+
+          {/* RandomX mode badge — shown whenever the miner is running */}
+          {mode && !isStopped && (
+            <div
+              className="inline-flex items-center gap-1.5 text-xs cursor-help w-fit"
+              title={
+                mode.fullMem
+                  ? `Fast mode: RandomX uses a full ~2.3 GB dataset for much faster hashing. Enabled because ${mode.freeMemMb.toLocaleString()} MB RAM was free at start.`
+                  : `Light mode: RandomX uses ~256 MB per thread. Fast mode needs ~2.3 GB free RAM; only ${mode.freeMemMb.toLocaleString()} MB was free at start.`
+              }
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${mode.fullMem ? "bg-peer" : "bg-zinc-500"}`} />
+              <span className={mode.fullMem ? "text-peer" : "text-zinc-400"}>
+                {mode.fullMem ? "Fast mode" : "Light mode, low memory"}
+              </span>
+            </div>
+          )}
 
           {/* Last-known sync progress — shown when stopped and cache exists */}
           {isStopped && syncCache && syncCache.highest > 0 && (

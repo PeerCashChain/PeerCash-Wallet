@@ -312,7 +312,46 @@ extern "system" {
     fn AttachConsole(process_id: u32) -> i32;
     fn FreeConsole() -> i32;
     fn SetConsoleCtrlHandler(handler: *mut std::ffi::c_void, add: i32) -> i32;
+    fn GlobalMemoryStatusEx(buf: *mut MemoryStatusEx) -> i32;
 }
+
+#[repr(C)]
+struct MemoryStatusEx {
+    length:                   u32,
+    _memory_load:             u32,
+    _total_phys:              u64,
+    avail_phys:               u64,
+    _total_page_file:         u64,
+    _avail_page_file:         u64,
+    _total_virtual:           u64,
+    _avail_virtual:           u64,
+    _avail_extended_virtual:  u64,
+}
+
+/// Available (free) physical RAM in bytes, or None if the query fails.
+fn available_phys_bytes() -> Option<u64> {
+    let mut status: MemoryStatusEx = unsafe { std::mem::zeroed() };
+    status.length = std::mem::size_of::<MemoryStatusEx>() as u32;
+    if unsafe { GlobalMemoryStatusEx(&mut status) } != 0 {
+        Some(status.avail_phys)
+    } else {
+        None
+    }
+}
+
+/// Which RandomX mining mode the sealer was started in. Serialized to the UI.
+#[derive(Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MinerMode {
+    /// true → GETH_RANDOMX_FULLMEM=1 (fast/full-dataset, ~2.3 GiB); false → light mode.
+    full_mem:     bool,
+    /// Free physical RAM (MiB) observed at spawn time — drives the decision.
+    free_mem_mb:  u64,
+}
+
+/// Enable RandomX fast mode only when at least this much physical RAM is free.
+/// Fast mode allocates a ~2.3 GiB dataset; 4 GiB free leaves comfortable headroom.
+const FULLMEM_MIN_FREE_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 
 /// Attach to the miner's hidden console and deliver a CTRL_BREAK to its process group.
 ///
@@ -369,6 +408,7 @@ struct JobExtendedLimitInfo {
 struct MinerChild {
     process: Child,
     _job:    JobHandle,
+    mode:    MinerMode,
 }
 
 struct MinerProcess(Mutex<Option<MinerChild>>);
@@ -884,10 +924,18 @@ async fn start_miner(
     network_state: tauri::State<'_, NetworkState>,
     address: String,
     threads: u32,
-) -> Result<(), String> {
+) -> Result<MinerMode, String> {
     let net = *network_state.0.lock().map_err(|e| e.to_string())?;
     // Clamp to a sane floor: GETH_RANDOMX_THREADS unset/0 makes the sealer use ALL cores.
     let threads = threads.clamp(1, 64);
+
+    // Decide the RandomX memory mode from free physical RAM. Fast mode (full dataset,
+    // ~2.3 GiB) is only enabled with >= 4 GiB free; otherwise fall back to light mode.
+    let free_bytes = available_phys_bytes().unwrap_or(0);
+    let mode = MinerMode {
+        full_mem:    free_bytes >= FULLMEM_MIN_FREE_BYTES,
+        free_mem_mb: free_bytes / (1024 * 1024),
+    };
 
     // Validate address before it reaches the subprocess command line.
     let addr_hex = address.trim_start_matches("0x");
@@ -976,7 +1024,8 @@ async fn start_miner(
     let datadir_str = datadir.to_string_lossy().to_string();
     // geth accepts a comma-separated bootnode list; mainnet ships two.
     let bootnodes = net.bootnodes.join(",");
-    let child = Command::new(&binary_path)
+    let mut cmd = Command::new(&binary_path);
+    cmd
         .args([
             "--datadir",         &datadir_str,
             "--networkid",       net.network_id,
@@ -997,7 +1046,15 @@ async fn start_miner(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::from(log_file))
-        .creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP)
+        .creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
+
+    // The fork enables RandomX fast/full-dataset mode only when this == "1"
+    // (eth/ethconfig/config.go). Left unset → light mode (~256 MiB per thread).
+    if mode.full_mem {
+        cmd.env("GETH_RANDOMX_FULLMEM", "1");
+    }
+
+    let child = cmd
         .spawn()
         .map_err(|e| format!("Failed to spawn miner: {e}\nBinary: {}", binary_path.display()))?;
 
@@ -1018,8 +1075,8 @@ async fn start_miner(
         }
     }
 
-    *guard = Some(MinerChild { process: child, _job: JobHandle(job) });
-    Ok(())
+    *guard = Some(MinerChild { process: child, _job: JobHandle(job), mode });
+    Ok(mode)
 }
 
 /// Gracefully shut down the miner, waiting up to 5 s for it to flush its state DB.
@@ -1088,6 +1145,23 @@ async fn get_miner_pid(miner_state: tauri::State<'_, MinerProcess>) -> Result<Op
         None => Ok(None),
         Some(mc) => match mc.process.try_wait().map_err(|e| e.to_string())? {
             None => Ok(Some(mc.process.id())),
+            Some(_) => {
+                *guard = None;
+                Ok(None)
+            }
+        },
+    }
+}
+
+/// The RandomX mode of the currently running miner, or None if stopped/crashed.
+/// Lets the UI show "Fast/Light mode" after a remount without re-reading free RAM.
+#[tauri::command]
+async fn get_miner_mode(miner_state: tauri::State<'_, MinerProcess>) -> Result<Option<MinerMode>, String> {
+    let mut guard = miner_state.0.lock().map_err(|e| e.to_string())?;
+    match guard.as_mut() {
+        None => Ok(None),
+        Some(mc) => match mc.process.try_wait().map_err(|e| e.to_string())? {
+            None => Ok(Some(mc.mode)),
             Some(_) => {
                 *guard = None;
                 Ok(None)
@@ -1179,6 +1253,7 @@ pub fn run() {
             start_miner,
             stop_miner,
             get_miner_pid,
+            get_miner_mode,
             get_miner_log_tail,
             get_sync_cache,
             save_sync_cache,

@@ -193,9 +193,16 @@ export default function App() {
     <div className="h-screen flex flex-col overflow-hidden">
       <UpdateBanner />
       <div className="flex-1 overflow-auto min-h-0">
-        {net && (tab === "wallet"
-          ? <Wallet key={net.key} address={address} net={net} onNetworkChange={setNet} />
-          : <MinerTab key={net.key} address={address} net={net} />
+        {/* MinerTab stays mounted across tab switches (hidden with CSS) so a
+            running miner's status/elapsed/mode state doesn't reset — switching to
+            the wallet and back used to unmount it and replay the whole startup. */}
+        {net && tab === "wallet" && (
+          <Wallet key={net.key} address={address} net={net} onNetworkChange={setNet} />
+        )}
+        {net && (
+          <div className={tab === "miner" ? "contents" : "hidden"}>
+            <MinerTab key={net.key} address={address} net={net} />
+          </div>
         )}
       </div>
       <TabBar tab={tab} onSwitch={setTab} />
