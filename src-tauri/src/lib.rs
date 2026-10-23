@@ -1417,7 +1417,10 @@ async fn restore_snapshot(
         .map_err(|e| e.to_string())?
         .join("miner-node")
         .join(net.key);
-    let chaindata = datadir.join("peercash").join("chaindata");
+    // The zip contains the instance dirs chaindata/ and triedb/ (the latter holds the
+    // PBSS head-state journal; without it the node rewinds ~90k blocks). Extract into
+    // the instance dir so both land correctly.
+    let instance = datadir.join("peercash");
     std::fs::create_dir_all(&datadir).map_err(|e| e.to_string())?;
 
     // 1. download
@@ -1435,13 +1438,16 @@ async fn restore_snapshot(
         ));
     }
 
-    // 3. extract (replace any existing chaindata)
+    // 3. extract (replace any existing chaindata + triedb)
     let _ = app.emit("snapshot-progress", json!({ "phase": "extract", "pct": 0 }));
-    if chaindata.exists() {
-        std::fs::remove_dir_all(&chaindata).map_err(|e| e.to_string())?;
+    for sub in ["chaindata", "triedb"] {
+        let p = instance.join(sub);
+        if p.exists() {
+            std::fs::remove_dir_all(&p).map_err(|e| e.to_string())?;
+        }
     }
-    std::fs::create_dir_all(&chaindata).map_err(|e| e.to_string())?;
-    extract_zip(&tmp, &chaindata)?;
+    std::fs::create_dir_all(&instance).map_err(|e| e.to_string())?;
+    extract_zip(&tmp, &instance)?;
     let _ = std::fs::remove_file(&tmp);
 
     // Seed the sync cache so the UI shows the restored height immediately.
