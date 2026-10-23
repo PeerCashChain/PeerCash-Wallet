@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 // ── Tauri command wrappers ────────────────────────────────────────────────────
 
@@ -67,6 +68,56 @@ export function formatHashrate(hps: number): string {
 
 export function getSyncCache(): Promise<{ current: number; highest: number } | null> {
   return invoke<{ current: number; highest: number } | null>("get_sync_cache").catch(() => null);
+}
+
+// ── Fast first-sync (snapshot) ────────────────────────────────────────────────
+
+export interface SnapshotManifest {
+  chainId: string;
+  height: number;
+  headHash: string;
+  url: string;
+  sha256: string;
+  sizeBytes: number;
+  stateScheme: string;
+}
+
+export interface FirstSyncPlan {
+  localHeight: number;        // last synced height (0 = fresh install)
+  networkTip: number;         // current chain head (0 = couldn't reach RPC)
+  gap: number;                // networkTip - localHeight
+  thresholdExceeded: boolean; // gap large enough to offer a snapshot
+  snapshot: SnapshotManifest | null; // present only if a manifest was published
+}
+
+/** Computed before mining starts: whether to offer a snapshot. Never throws fatally. */
+export function planFirstSync(): Promise<FirstSyncPlan | null> {
+  return invoke<FirstSyncPlan>("plan_first_sync").catch(() => null);
+}
+
+/** Download + verify + extract the published snapshot into chaindata. Miner must be stopped. */
+export function restoreSnapshot(): Promise<void> {
+  return invoke("restore_snapshot");
+}
+
+export interface SnapshotProgress {
+  phase: "download" | "verify" | "extract" | "done";
+  pct: number;
+  downloaded?: number;
+  total?: number;
+}
+
+/** Subscribe to snapshot restore progress. Returns an unlisten fn. */
+export function onSnapshotProgress(cb: (p: SnapshotProgress) => void): Promise<UnlistenFn> {
+  return listen<SnapshotProgress>("snapshot-progress", (e) => cb(e.payload));
+}
+
+/** Human-readable byte size, e.g. 341 MB. */
+export function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(0)} MB`;
+  return `${(n / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
 function saveSyncCache(current: number, highest: number): void {
