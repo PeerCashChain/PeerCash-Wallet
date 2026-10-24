@@ -1,11 +1,11 @@
 {
-  "version": "0.2.3",
-  "notes": "Miner now auto-selects RandomX fast (full-dataset) mode when enough RAM is free, and shows the active mode plus a live hashrate in the Miner tab. Fixes a crash when mining with multiple threads, and the miner status no longer resets when switching tabs.",
-  "pub_date": "2026-10-08T21:14:20Z",
+  "version": "0.2.5",
+  "notes": "Faster first-time sync: new wallets can now restore a recent chain snapshot instead of replaying every block, cutting initial setup from hours to a few minutes. Also updates the bundled node to the latest network-stability fixes (gossip/backfill sync and reorg handling) for more reliable syncing and mining.",
+  "pub_date": "2026-10-24T12:13:00Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRZHZlVEtoZzA5ZEsvajNocVlFaDRwb05Ydll3L0tkbnNMdWtKeXNTZGxvdjdpTFdEUmRpUEZQMVhnb0U2YnJ5eDVzNmJGa1ZaS1Q1OE5GQ1IzUjk2SjI0OTZFdEVzOWcwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxNDkzODM0CWZpbGU6UGVlckNhc2gtV2FsbGV0XzAuMi4zX3g2NC1zZXR1cC5leGUKZVhYU0xTTUNlQkNKYjJlSXpEOGhRMUkvempLUmlOam9oWWdkY2xGdnRTVkQvdUtyS2pzVDhTZEpuUUZQck1GWVFrT1RxQ0ZScUV1QS9WNEhXRHdUQVE9PQo=",
-      "url": "https://github.com/PeerCashChain/PeerCash-Wallet/releases/download/v0.2.3/PeerCash-Wallet_0.2.3_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRZHZlVEtoZzA5ZEtMek4rdzEvL1RSb1NoUUEwWUc5QlA3bmkvWm9TdWpnblhTR1RwcDhKdnFCcm1EYm9PV01tOFloanBYc2dTVXY1azlLSVNQZ3FzRGk1ZVJiUDdSWkFNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyODAyMzgzCWZpbGU6UGVlckNhc2ggV2FsbGV0XzAuMi41X3g2NC1zZXR1cC5leGUKMkNnSkNPaTlaZURsS0dtRm9XMzZUYzVUdWgrT0s3SzE2cldzZ1ZxbTA2T3hqYWdWdFRjNWR0SzZ1SWZjdGIwNlVPbGVOZy9wQTRQdzFPOVlZamtGRGc9PQo=",
+      "url": "https://github.com/PeerCashChain/PeerCash-Wallet/releases/download/v0.2.5/PeerCash-Wallet_0.2.5_x64-setup.exe"
     }
   }
 }
