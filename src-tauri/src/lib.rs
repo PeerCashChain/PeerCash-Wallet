@@ -7,7 +7,7 @@ use std::os::windows::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use zeroize::Zeroizing;
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -33,6 +33,13 @@ const MAX_FAILED_ATTEMPTS: u32 = 5;
 const MINER_HTTP_PORT: &str = "8546";
 const MINER_P2P_PORT: &str = "30304";
 
+// A fresh node full-syncs (snap sync is disabled while --mine is set), replaying
+// every block's state. When the local chain is more than this many blocks behind
+// the network tip, we offer a one-time chaindata snapshot restore so the node
+// starts near the head instead of validating the whole chain from genesis.
+// ~25k blocks ≈ 3.75 days of chain (~10s blocks) ≈ ~40 min of full sync.
+const SNAPSHOT_GAP_THRESHOLD: u64 = 25_000;
+
 // ── Network registry ──────────────────────────────────────────────────────────
 // Single source of truth for every network. To add a network: append one entry
 // here and bundle its genesis under src-tauri/resources/ (+ tauri.conf.json). The
@@ -50,6 +57,11 @@ struct Network {
     bootnodes: &'static [&'static str],
     genesis_resource: &'static str, // bundled resource filename
     genesis_env: &'static str,      // debug-only env var that overrides the genesis path
+    // Stable URL of the fast-sync snapshot manifest (JSON). None = no snapshot
+    // offered for this network; the node then always syncs from genesis. The
+    // snapshot MUST be a PATH-scheme chaindata (the scheme this node runs with by
+    // default) — a hash-scheme snapshot from the infra fleet will NOT load here.
+    snapshot_manifest_url: Option<&'static str>,
 }
 
 const NETWORKS: &[Network] = &[
@@ -67,6 +79,12 @@ const NETWORKS: &[Network] = &[
         ],
         genesis_resource: "mainnet.json",
         genesis_env: "PEERCASH_GENESIS_MAINNET",
+        // Dedicated snapshots repo, long-lived `mainnet-latest` release tag, so the
+        // URL stays stable as snapshots are refreshed (assets are replaced in place).
+        // Until a snapshot is published the fetch 404s and we just sync normally.
+        snapshot_manifest_url: Some(
+            "https://github.com/PeerCashChain/peercash-snapshots/releases/download/mainnet-latest/peercash-mainnet-snapshot.json",
+        ),
     },
     // NOTE: testnet (chainId 563321) is temporarily omitted. It runs the legacy
     // keccak-stub consensus, which the real-RandomX binary we now ship cannot
@@ -421,6 +439,37 @@ struct SyncCache {
     highest: u64,
 }
 
+// ── Fast-sync snapshot ────────────────────────────────────────────────────────
+
+/// Published snapshot descriptor (fetched from Network.snapshot_manifest_url).
+/// The on-disk schema is camelCase; see solo-miner/SNAPSHOT-MANIFEST.md.
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct SnapshotManifest {
+    #[serde(default)]
+    chain_id: String, // e.g. "0x9767c"
+    height: u64,
+    #[serde(default)]
+    head_hash: String,
+    url: String, // zip of chaindata CONTENTS (path-scheme)
+    sha256: String,
+    #[serde(default)]
+    size_bytes: u64,
+    #[serde(default)]
+    state_scheme: String, // must be "path" for this node
+}
+
+/// What start-up should do about first sync, computed before launching the node.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FirstSyncPlan {
+    local_height: u64,       // last synced height (0 = fresh install)
+    network_tip: u64,        // current chain head per the public RPC (0 = unknown)
+    gap: u64,                // network_tip - local_height
+    threshold_exceeded: bool, // gap > SNAPSHOT_GAP_THRESHOLD
+    snapshot: Option<SnapshotManifest>, // present only if a manifest was fetched
+}
+
 fn sync_cache_path(app: &tauri::AppHandle, net: &Network) -> Option<std::path::PathBuf> {
     app.path()
         .app_data_dir()
@@ -651,6 +700,94 @@ async fn rpc_request(url: &str, method: &str, params: Value) -> Result<Value, St
         return Err(err["message"].as_str().unwrap_or("RPC error").to_string());
     }
     Ok(data["result"].clone())
+}
+
+// ── Snapshot helpers ──────────────────────────────────────────────────────────
+
+async fn fetch_manifest(url: &str) -> Result<SnapshotManifest, String> {
+    let client = reqwest::Client::new();
+    let resp = client.get(url).send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("manifest HTTP {}", resp.status()));
+    }
+    resp.json::<SnapshotManifest>().await.map_err(|e| e.to_string())
+}
+
+/// Stream a download to `dest`, emitting "snapshot-progress" events as it goes.
+async fn download_with_progress(
+    app: &tauri::AppHandle,
+    url: &str,
+    dest: &std::path::Path,
+    expected_size: u64,
+) -> Result<(), String> {
+    use futures_util::StreamExt;
+    use std::io::Write;
+
+    let client = reqwest::Client::new();
+    let resp = client.get(url).send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("download HTTP {}", resp.status()));
+    }
+    let total = resp.content_length().unwrap_or(expected_size);
+    let mut file = std::fs::File::create(dest).map_err(|e| e.to_string())?;
+    let mut downloaded: u64 = 0;
+    let mut last_pct: u64 = u64::MAX;
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| e.to_string())?;
+        file.write_all(&chunk).map_err(|e| e.to_string())?;
+        downloaded += chunk.len() as u64;
+        if total > 0 {
+            let pct = downloaded.saturating_mul(100) / total;
+            if pct != last_pct {
+                last_pct = pct;
+                let _ = app.emit(
+                    "snapshot-progress",
+                    json!({ "phase": "download", "pct": pct, "downloaded": downloaded, "total": total }),
+                );
+            }
+        }
+    }
+    file.flush().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn sha256_file(path: &std::path::Path) -> Result<String, String> {
+    use sha2::{Digest as _, Sha256};
+    use std::io::Read;
+    let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 1 << 16];
+    loop {
+        let n = file.read(&mut buf).map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+/// Extract a zip (whose top-level entries are chaindata's CONTENTS) into `dest`.
+/// Uses enclosed_name() to reject zip-slip paths.
+fn extract_zip(zip_path: &std::path::Path, dest: &std::path::Path) -> Result<(), String> {
+    let file = std::fs::File::open(zip_path).map_err(|e| e.to_string())?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
+        let Some(rel) = entry.enclosed_name() else { continue };
+        let outpath = dest.join(rel);
+        if entry.is_dir() {
+            std::fs::create_dir_all(&outpath).map_err(|e| e.to_string())?;
+        } else {
+            if let Some(parent) = outpath.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            let mut outfile = std::fs::File::create(&outpath).map_err(|e| e.to_string())?;
+            std::io::copy(&mut entry, &mut outfile).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
 }
 
 // ── Keystore helpers ──────────────────────────────────────────────────────────
@@ -990,8 +1127,10 @@ async fn start_miner(
     let datadir = app_dir.join("miner-node").join(net.key);
     std::fs::create_dir_all(&datadir).map_err(|e| e.to_string())?;
 
-    // Init genesis on first run (check for geth/chaindata which init creates)
-    let chaindata = datadir.join("geth").join("chaindata");
+    // Init genesis on first run. The branded binary writes its instance data under
+    // `peercash/` (NOT `geth/`), so check there — otherwise init re-runs every launch.
+    // A snapshot restore populates this same path, which correctly skips re-init.
+    let chaindata = datadir.join("peercash").join("chaindata");
     if !chaindata.exists() {
         let status = Command::new(&binary_path)
             .args(["init", "--datadir", &datadir.to_string_lossy(), &genesis_path.to_string_lossy()])
@@ -1198,6 +1337,133 @@ async fn save_sync_cache(
     std::fs::write(&path, json).map_err(|e| e.to_string())
 }
 
+// ── Fast-sync commands ────────────────────────────────────────────────────────
+
+/// Decide whether to offer a snapshot before mining starts. All network calls are
+/// best-effort: if the tip or manifest can't be fetched we return what we have and
+/// the caller falls open to a normal genesis/gap sync.
+#[tauri::command]
+async fn plan_first_sync(
+    app: tauri::AppHandle,
+    network_state: tauri::State<'_, NetworkState>,
+) -> Result<FirstSyncPlan, String> {
+    // Copy out &'static fields and drop the guard before awaiting.
+    let (rpc_url, manifest_url, net): (&str, Option<&str>, &'static Network) = {
+        let g = network_state.0.lock().map_err(|e| e.to_string())?;
+        (g.rpc_url, g.snapshot_manifest_url, *g)
+    };
+
+    // Last synced height from the sync cache; absent => fresh install (0).
+    let local_height = sync_cache_path(&app, net)
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|s| serde_json::from_str::<SyncCache>(&s).ok())
+        .map(|c| c.current)
+        .unwrap_or(0);
+
+    // Network tip (best-effort).
+    let network_tip = rpc_request(rpc_url, "eth_blockNumber", json!([]))
+        .await
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok())
+        .unwrap_or(0);
+
+    // Snapshot manifest (best-effort; a 404 before one is published is normal).
+    let snapshot = match manifest_url {
+        Some(url) => fetch_manifest(url).await.ok(),
+        None => None,
+    };
+
+    let gap = network_tip.saturating_sub(local_height);
+    Ok(FirstSyncPlan {
+        local_height,
+        network_tip,
+        gap,
+        threshold_exceeded: gap > SNAPSHOT_GAP_THRESHOLD,
+        snapshot,
+    })
+}
+
+/// Download, verify (SHA256), and extract the published snapshot into the node's
+/// chaindata. Must be called with the miner STOPPED and BEFORE first start.
+/// Emits "snapshot-progress" events ({phase, pct, ...}) for the UI.
+#[tauri::command]
+async fn restore_snapshot(
+    app: tauri::AppHandle,
+    miner_state: tauri::State<'_, MinerProcess>,
+    network_state: tauri::State<'_, NetworkState>,
+) -> Result<(), String> {
+    // Refuse to clobber chaindata out from under a live node.
+    {
+        let mut guard = miner_state.0.lock().map_err(|e| e.to_string())?;
+        if let Some(ref mut mc) = *guard {
+            match mc.process.try_wait() {
+                Ok(None) => return Err("Stop mining before restoring a snapshot".to_string()),
+                _ => *guard = None,
+            }
+        }
+    }
+
+    let (manifest_url, net): (Option<&str>, &'static Network) = {
+        let g = network_state.0.lock().map_err(|e| e.to_string())?;
+        (g.snapshot_manifest_url, *g)
+    };
+    let manifest_url = manifest_url.ok_or("No snapshot is configured for this network")?;
+    let manifest = fetch_manifest(manifest_url).await?;
+
+    let datadir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("miner-node")
+        .join(net.key);
+    // The zip contains the instance dirs chaindata/ and triedb/ (the latter holds the
+    // PBSS head-state journal; without it the node rewinds ~90k blocks). Extract into
+    // the instance dir so both land correctly.
+    let instance = datadir.join("peercash");
+    std::fs::create_dir_all(&datadir).map_err(|e| e.to_string())?;
+
+    // 1. download
+    let tmp = datadir.join("snapshot.zip.part");
+    download_with_progress(&app, &manifest.url, &tmp, manifest.size_bytes).await?;
+
+    // 2. verify
+    let _ = app.emit("snapshot-progress", json!({ "phase": "verify", "pct": 100 }));
+    let got = sha256_file(&tmp)?;
+    if !got.eq_ignore_ascii_case(&manifest.sha256) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!(
+            "Snapshot SHA256 mismatch - refusing to use it.\n expected {}\n got      {}",
+            manifest.sha256, got
+        ));
+    }
+
+    // 3. extract (replace any existing chaindata + triedb)
+    let _ = app.emit("snapshot-progress", json!({ "phase": "extract", "pct": 0 }));
+    for sub in ["chaindata", "triedb"] {
+        let p = instance.join(sub);
+        if p.exists() {
+            std::fs::remove_dir_all(&p).map_err(|e| e.to_string())?;
+        }
+    }
+    std::fs::create_dir_all(&instance).map_err(|e| e.to_string())?;
+    extract_zip(&tmp, &instance)?;
+    let _ = std::fs::remove_file(&tmp);
+
+    // Seed the sync cache so the UI shows the restored height immediately.
+    if let Some(p) = sync_cache_path(&app, net) {
+        if let Ok(json) = serde_json::to_string(&SyncCache {
+            current: manifest.height,
+            highest: manifest.height,
+        }) {
+            let _ = std::fs::write(&p, json);
+        }
+    }
+
+    let _ = app.emit("snapshot-progress", json!({ "phase": "done", "pct": 100 }));
+    Ok(())
+}
+
 // ── Network commands ──────────────────────────────────────────────────────────
 
 /// The currently selected network (for display + to seed the selector).
@@ -1257,6 +1523,8 @@ pub fn run() {
             get_miner_log_tail,
             get_sync_cache,
             save_sync_cache,
+            plan_first_sync,
+            restore_snapshot,
             get_network,
             list_networks,
             set_network,

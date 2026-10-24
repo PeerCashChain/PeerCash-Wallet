@@ -5,11 +5,18 @@ import {
   pollMinerStatus,
   getSyncCache,
   getMinerMode,
+  planFirstSync,
+  restoreSnapshot,
+  onSnapshotProgress,
   formatHashrate,
+  formatBytes,
   type MinerStatus,
   type MinerPollResult,
   type MinerMode,
+  type FirstSyncPlan,
+  type SnapshotProgress,
 } from "../lib/miner";
+import type { UnlistenFn } from "@tauri-apps/api/event";
 import type { NetworkInfo } from "../config";
 
 interface Props {
@@ -110,6 +117,10 @@ export default function MinerTab({ address, net }: Props) {
   const [mode, setMode] = useState<MinerMode | null>(null);
   // When the node first reached the mining phase — RandomX dataset build starts here.
   const [miningStartedAt, setMiningStartedAt] = useState<number | null>(null);
+  // Fast-sync snapshot: pending choice (modal) + restore progress.
+  const [pendingPlan, setPendingPlan] = useState<FirstSyncPlan | null>(null);
+  const [restoring, setRestoring] = useState(false);
+  const [restoreProgress, setRestoreProgress] = useState<SnapshotProgress | null>(null);
 
   const runningRef = useRef(running);
   const prevSyncRef = useRef<{ block: number; ts: number } | null>(null);
@@ -192,15 +203,63 @@ export default function MinerTab({ address, net }: Props) {
     return () => { cancelled = true; clearInterval(id); };
   }, [running]);
 
+  async function launchMiner() {
+    const m = await startMiner(address, threads);
+    setMode(m);
+    setRunning(true);
+    setStartedAt(Date.now());
+    setPoll({ status: "starting" });
+  }
+
   async function handleStart() {
     setError("");
     setToggling(true);
     try {
-      const m = await startMiner(address, threads);
-      setMode(m);
-      setRunning(true);
-      setStartedAt(Date.now());
-      setPoll({ status: "starting" });
+      // Offer a one-time snapshot restore when the local chain is far behind tip.
+      // Best-effort: planFirstSync returns null on any failure → just start.
+      const plan = await planFirstSync();
+      if (plan?.thresholdExceeded && plan.snapshot) {
+        setPendingPlan(plan);
+        setToggling(false);
+        return; // wait for the user's choice in the modal
+      }
+      await launchMiner();
+      setToggling(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to start miner");
+      setToggling(false);
+    }
+  }
+
+  // User chose the snapshot: download + verify + extract, then start mining.
+  async function startWithSnapshot() {
+    const plan = pendingPlan;
+    setPendingPlan(null);
+    if (!plan?.snapshot) return;
+    setError("");
+    setRestoring(true);
+    setRestoreProgress({ phase: "download", pct: 0 });
+    let unlisten: UnlistenFn | undefined;
+    try {
+      unlisten = await onSnapshotProgress(setRestoreProgress);
+      await restoreSnapshot();
+      await launchMiner();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Snapshot restore failed — try syncing from the network instead.");
+    } finally {
+      unlisten?.();
+      setRestoring(false);
+      setRestoreProgress(null);
+    }
+  }
+
+  // User declined the snapshot: sync from genesis/gap the normal way.
+  async function startWithoutSnapshot() {
+    setPendingPlan(null);
+    setError("");
+    setToggling(true);
+    try {
+      await launchMiner();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to start miner");
     } finally {
@@ -393,8 +452,34 @@ export default function MinerTab({ address, net }: Props) {
           </p>
         </div>
 
+        {/* ── Snapshot restore progress ── */}
+        {restoring && (
+          <div className="bg-zinc-900 border border-blue-800/50 rounded-xl p-5 space-y-2">
+            <p className="text-sm font-medium text-blue-300">
+              {restoreProgress?.phase === "verify"  ? "Verifying snapshot…"
+                : restoreProgress?.phase === "extract" ? "Extracting snapshot…"
+                : "Downloading snapshot…"}
+            </p>
+            <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-blue-400 rounded-full transition-all duration-300"
+                style={{ width: `${restoreProgress?.pct ?? 0}%` }}
+              />
+            </div>
+            <div className="flex justify-between text-xs text-zinc-500 tabular-nums">
+              <span>{restoreProgress?.pct ?? 0}%</span>
+              {restoreProgress?.phase === "download" && restoreProgress.total ? (
+                <span>
+                  {formatBytes(restoreProgress.downloaded ?? 0)} / {formatBytes(restoreProgress.total)}
+                </span>
+              ) : null}
+            </div>
+            <p className="text-xs text-zinc-600">Mining starts automatically when this finishes.</p>
+          </div>
+        )}
+
         {/* ── Start / Stop button ── */}
-        {isStopped ? (
+        {restoring ? null : isStopped ? (
           <button
             onClick={handleStart}
             disabled={toggling}
@@ -426,6 +511,44 @@ export default function MinerTab({ address, net }: Props) {
         </div>
 
       </main>
+
+      {/* ── Fast-sync choice modal ── */}
+      {pendingPlan?.snapshot && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-6">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-full max-w-md space-y-4">
+            <h2 className="text-lg font-semibold text-white">Catch up faster?</h2>
+            <p className="text-sm text-zinc-400">
+              Your node is{" "}
+              <span className="text-white font-medium tabular-nums">
+                {pendingPlan.gap.toLocaleString()}
+              </span>{" "}
+              blocks behind the network. You can download a verified snapshot
+              (~{formatBytes(pendingPlan.snapshot.sizeBytes)}, up to block{" "}
+              {pendingPlan.snapshot.height.toLocaleString()}) and start mining in a
+              minute or two — or sync the whole chain from scratch, which is fully
+              trustless but much slower.
+            </p>
+            <p className="text-xs text-zinc-600">
+              The snapshot's checksum is verified before it's used. Either way your
+              node keeps validating forward from there.
+            </p>
+            <div className="space-y-2 pt-1">
+              <button
+                onClick={startWithSnapshot}
+                className="w-full bg-peer hover:bg-peer-dark text-white text-sm font-medium py-3 rounded-xl transition-colors cursor-pointer"
+              >
+                Fast sync (download snapshot)
+              </button>
+              <button
+                onClick={startWithoutSnapshot}
+                className="w-full border border-zinc-700 hover:border-zinc-500 text-zinc-300 hover:text-white text-sm font-medium py-3 rounded-xl transition-colors cursor-pointer"
+              >
+                Sync from network instead
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
