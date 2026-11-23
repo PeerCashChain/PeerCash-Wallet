@@ -9,8 +9,8 @@ export interface MinerMode {
   freeMemMb: number;  // free physical RAM observed when the miner was started
 }
 
-export function startMiner(address: string, threads: number): Promise<MinerMode> {
-  return invoke("start_miner", { address, threads });
+export function startMiner(address: string, threads: number, fastMode: boolean): Promise<MinerMode> {
+  return invoke("start_miner", { address, threads, fastMode });
 }
 
 export function stopMiner(): Promise<void> {

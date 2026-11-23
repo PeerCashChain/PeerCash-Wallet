@@ -26,6 +26,11 @@ interface Props {
 
 const LABEL = "block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-1.5";
 
+// Upper bound for the thread selector: the machine's logical processors, capped at 64
+// (the Rust side clamps GETH_RANDOMX_THREADS to 1..64). A hardcoded 16 would leave most
+// of a high-core-count CPU idle. Falls back to 16 if the webview can't report it.
+const MAX_THREADS = Math.min(64, Math.max(1, navigator.hardwareConcurrency || 16));
+
 function StatusDot({ status }: { status: MinerStatus }) {
   const cls = {
     stopped: "bg-zinc-600",
@@ -106,8 +111,13 @@ export default function MinerTab({ address, net }: Props) {
   // the wallet tab is shown) and app restarts, and reflects the running miner.
   const [threads, setThreads] = useState<number>(() => {
     const saved = parseInt(localStorage.getItem("peercash.minerThreads") ?? "", 10);
-    return Number.isFinite(saved) && saved >= 1 && saved <= 16 ? saved : 2;
+    return Number.isFinite(saved) && saved >= 1 && saved <= MAX_THREADS ? saved : 2;
   });
+  // Fast (full-dataset) RandomX mode. Opt-in, default OFF: light mode always works, while
+  // fast mode needs ~4 GB free RAM (the Rust side refuses to start it without that).
+  const [fastMode, setFastMode] = useState<boolean>(
+    () => localStorage.getItem("peercash.fastMode") === "1",
+  );
   const [error, setError] = useState("");
   const [toggling, setToggling] = useState(false);
   const [startedAt, setStartedAt] = useState<number | null>(null);
@@ -129,6 +139,9 @@ export default function MinerTab({ address, net }: Props) {
 
   // Persist the thread selection across remounts/restarts.
   useEffect(() => { localStorage.setItem("peercash.minerThreads", String(threads)); }, [threads]);
+
+  // Persist the fast-mode choice across remounts/restarts.
+  useEffect(() => { localStorage.setItem("peercash.fastMode", fastMode ? "1" : "0"); }, [fastMode]);
 
   // Calculate sync rate whenever currentBlock advances
   useEffect(() => {
@@ -204,7 +217,7 @@ export default function MinerTab({ address, net }: Props) {
   }, [running]);
 
   async function launchMiner() {
-    const m = await startMiner(address, threads);
+    const m = await startMiner(address, threads, fastMode);
     setMode(m);
     setRunning(true);
     setStartedAt(Date.now());
@@ -441,15 +454,39 @@ export default function MinerTab({ address, net }: Props) {
             <span className="text-3xl font-bold tabular-nums w-10 text-center">{threads}</span>
             <button
               disabled={running}
-              onClick={() => setThreads((t) => Math.min(16, t + 1))}
+              onClick={() => setThreads((t) => Math.min(MAX_THREADS, t + 1))}
               className="w-9 h-9 rounded-lg border border-zinc-700 hover:border-zinc-500 text-zinc-300 hover:text-white text-xl font-light transition-colors disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
             >
               +
             </button>
           </div>
           <p className="text-xs text-zinc-600 text-center mt-2">
-            Default 2 — conservative for background mining. Max 16.
+            Default 2 — conservative for background mining. This machine supports up to {MAX_THREADS}.
+            {MAX_THREADS > 16 && " Most hashrate is usually near your physical core count; more threads can give diminishing returns."}
           </p>
+        </div>
+
+        {/* ── Fast mode toggle — opt-in, needs RAM ── */}
+        <div className={`bg-zinc-900 border border-zinc-800 rounded-xl p-5 ${running ? "opacity-50" : ""}`}>
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={fastMode}
+              disabled={running}
+              onChange={(e) => setFastMode(e.target.checked)}
+              className="mt-0.5 h-4 w-4 accent-peer cursor-pointer disabled:cursor-not-allowed"
+            />
+            <span>
+              <span className="block text-sm font-medium text-white">
+                Fast mode (uses more memory)
+              </span>
+              <span className="block text-xs text-zinc-500 mt-0.5">
+                Builds a ~2.3&nbsp;GB RandomX dataset for up to ~3&times; faster hashing.
+                Needs about 4&nbsp;GB of free RAM — if you don't have it, leave this off and
+                mine in light mode.
+              </span>
+            </span>
+          </label>
         </div>
 
         {/* ── Snapshot restore progress ── */}

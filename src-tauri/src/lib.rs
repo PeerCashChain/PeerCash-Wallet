@@ -1061,16 +1061,28 @@ async fn start_miner(
     network_state: tauri::State<'_, NetworkState>,
     address: String,
     threads: u32,
+    fast_mode: bool,
 ) -> Result<MinerMode, String> {
     let net = *network_state.0.lock().map_err(|e| e.to_string())?;
     // Clamp to a sane floor: GETH_RANDOMX_THREADS unset/0 makes the sealer use ALL cores.
     let threads = threads.clamp(1, 64);
 
-    // Decide the RandomX memory mode from free physical RAM. Fast mode (full dataset,
-    // ~2.3 GiB) is only enabled with >= 4 GiB free; otherwise fall back to light mode.
+    // Fast mode (full ~2.3 GiB dataset) is an explicit opt-in from the UI; the default is
+    // light mode, which always works. Guard the opt-in with a hard free-RAM floor: if the
+    // user asks for fast mode without enough memory, REFUSE here rather than let the sealer
+    // attempt the allocation and panic (consensus/randomx/bindings_cgo.go). This designs the
+    // crash out instead of trying to recover from it.
     let free_bytes = available_phys_bytes().unwrap_or(0);
+    if fast_mode && free_bytes < FULLMEM_MIN_FREE_BYTES {
+        return Err(format!(
+            "Fast mode needs about 4 GB of free memory for the RandomX dataset, but only {} MB is free right now. \
+Close some other apps and try again, or leave Fast mode off to mine in light mode.",
+            free_bytes / (1024 * 1024)
+        ));
+    }
     let mode = MinerMode {
-        full_mem:    free_bytes >= FULLMEM_MIN_FREE_BYTES,
+        // The guard above guarantees sufficient RAM whenever fast_mode is set.
+        full_mem:    fast_mode,
         free_mem_mb: free_bytes / (1024 * 1024),
     };
 
